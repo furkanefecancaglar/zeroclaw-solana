@@ -1,7 +1,7 @@
 name = "solana-token-risk"
 version = "0.1.0"
 description = "Live Solana token rug/honeypot risk evidence for a ZeroClaw agent: reads a mint over wasi:http and reports mint & freeze authority, Token-2022 dangerous extensions (transfer hook, permanent delegate, transfer fee, non-transferable, default-frozen), and holder concentration. Deterministic, read-only, no keys."
-author = "muhammetcintosun2123"
+author = "furkanefecancaglar"
 wasm_path = "solana_token_risk.wasm"
 capabilities = ["tool"]
 # http_client: outbound JSON-RPC reads to a Solana RPC endpoint (TLS host-side).
