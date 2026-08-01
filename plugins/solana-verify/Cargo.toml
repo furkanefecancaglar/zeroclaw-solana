@@ -30,3 +30,6 @@ codegen-units = 1
 
 # Standalone crate: built for wasm32-wasip2, not part of a host workspace.
 [workspace]
+
+[dev-dependencies]
+ed25519-dalek = "2"
