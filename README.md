@@ -49,6 +49,21 @@ Each build emits a WASM **component** exporting `zeroclaw:plugin/tool` — verif
 `wasm-tools component wit`. No `cargo-component` needed; the `wit_bindgen::generate!` macro
 handles it.
 
+### Composition — the four tools chained (real mainnet, one command)
+```bash
+./compose-demo.sh          # screen a wallet -> assess its riskiest mint -> build an unsigned exit -> verify
+```
+`solana-wallet-risk` screens a wallet and surfaces the riskiest holding;
+`solana-token-risk` deep-dives that exact mint; `solana-tx-builder` constructs the
+**unsigned** exit transfer (the agent builds, a wallet signs); `solana-verify` is
+the deterministic trust anchor. Each tool's output feeds the next — the
+system-level story, not four isolated tools.
+
+### Running in the real ZeroClaw runtime
+These install into the shipping runtime's plugin system (`plugins_dir`,
+`signature_mode`, WASM sandbox limits) — verified against ZeroClaw v0.8.3. See
+[`RUNTIME.md`](RUNTIME.md) for the exact `zeroclaw config` steps.
+
 ### Live demo (real mainnet data, one command)
 ```bash
 cd plugins/solana-token-risk && ./demo.sh          # tests + live BONK vs USDC assessment
