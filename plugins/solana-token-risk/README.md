@@ -22,7 +22,8 @@ human) ever touches a token.
 | `transfer_fee` (Token-2022) | low→high | A per-trade tax; flagged higher when a live authority can raise it |
 | `default_account_state_frozen` | high | Every new holder starts frozen until an authority thaws them |
 | `mint_close_authority` (Token-2022) | medium | The mint account can be closed |
-| `holder_concentration` | info→high | A single wallet holds a large share → dump risk (burn address excluded) |
+| `metadata_mutable` | medium | Metaplex metadata is mutable → name/symbol/image can be swapped after you buy (bait-and-switch) |
+| `holder_concentration` | info→high | A single keypair wallet holds a large share → dump risk (burn + off-curve LP/protocol vaults excluded) |
 
 Output is a JSON report with a `risk_score` (0–100), a `risk_band`
 (`MINIMAL`/`LOW`/`MEDIUM`/`HIGH`/`CRITICAL`), the raw authorities, and a `flags`

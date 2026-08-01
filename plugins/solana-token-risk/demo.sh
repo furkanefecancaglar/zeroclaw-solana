@@ -31,16 +31,23 @@ assess() {
     -d "{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"getTokenLargestAccounts\",\"params\":[\"$MINT\"]}" \
     > "$TMP/largest.json"
 
-  # Resolve owners of the top-6 token accounts so the tool can tell an LP/protocol
-  # vault (off-curve owner) apart from a whale wallet (on-curve). Built with no jq.
+  # Build a map {account -> getAccountInfo response} that the file-backed demo
+  # fetcher serves for (i) the top holders' owners — so the tool can tell an
+  # off-curve LP/protocol vault apart from an on-curve whale wallet — and (ii) the
+  # Metaplex metadata PDA — so mutable metadata is detected. Built with no jq.
   ADDRS=$( { grep -oE '"address":"[^"]+"' "$TMP/largest.json" || true; } | sed -E 's/"address":"([^"]+)"/\1/' | head -6 || true)
+  PDA=$(cargo run --release --quiet --example print_pda -- "$MINT" 2>/dev/null || true)
   echo "{" > "$TMP/owners.json"; FIRST=1
-  for A in $ADDRS; do
+  add_entry() {
+    local A="$1" ENC="$2"
+    local R
     R=$(curl -s "$RPC" -X POST -H 'Content-Type: application/json' \
-      -d "{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"getAccountInfo\",\"params\":[\"$A\",{\"encoding\":\"jsonParsed\"}]}")
+      -d "{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"getAccountInfo\",\"params\":[\"$A\",{\"encoding\":\"$ENC\"}]}")
     [ $FIRST -eq 0 ] && echo "," >> "$TMP/owners.json"; FIRST=0
     printf '"%s": %s' "$A" "$R" >> "$TMP/owners.json"
-  done
+  }
+  for A in $ADDRS; do add_entry "$A" "jsonParsed"; done
+  [ -n "$PDA" ] && add_entry "$PDA" "base64"
   echo "}" >> "$TMP/owners.json"
 
   cargo run --release --quiet --example assess_files -- "$MINT" "$TMP/acct.json" "$TMP/largest.json" "$TMP/owners.json"

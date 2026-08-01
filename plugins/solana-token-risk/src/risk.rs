@@ -10,6 +10,7 @@
 //! This is evidence, not financial advice. Holder concentration in particular can
 //! reflect a liquidity pool or an exchange, not a malicious whale; the report says so.
 
+use crate::metadata::MetadataInfo;
 use serde_json::Value;
 
 /// The SPL burn incinerator — tokens here are provably out of circulation, so we
@@ -65,6 +66,8 @@ pub struct TokenFacts {
     /// Largest token accounts, sorted desc by amount.
     pub top_holders: Vec<Holder>,
     pub holders_source_ok: bool,
+    /// Metaplex metadata mutability, once fetched.
+    pub metadata: Option<MetadataInfo>,
 }
 
 #[derive(Debug, Clone)]
@@ -219,6 +222,7 @@ pub fn parse_mint(mint: &str, account_info: &Value) -> Result<TokenFacts, String
         extensions,
         top_holders: Vec::new(),
         holders_source_ok: false,
+        metadata: None,
     })
 }
 
@@ -324,6 +328,24 @@ pub fn assess(f: &TokenFacts) -> RiskReport {
         });
     } else {
         notes.push("Freeze authority is renounced (null) — accounts cannot be frozen.".into());
+    }
+
+    // Metaplex metadata mutability.
+    if let Some(m) = &f.metadata {
+        if m.is_mutable {
+            flags.push(Flag {
+                code: "metadata_mutable".into(),
+                severity: Severity::Medium,
+                title: "Token metadata is mutable — name, symbol and image can be changed".into(),
+                evidence: format!(
+                    "Metaplex metadata is_mutable = true; update authority {} can rewrite the token's identity after you buy (a bait-and-switch vector).",
+                    m.update_authority
+                ),
+                points: 15,
+            });
+        } else {
+            notes.push("Token metadata is immutable — name, symbol and image are frozen.".into());
+        }
     }
 
     // Token-2022 dangerous extensions.

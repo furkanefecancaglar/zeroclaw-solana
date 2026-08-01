@@ -15,6 +15,7 @@
 //! Build:  rustup target add wasm32-wasip2
 //!         cargo build --target wasm32-wasip2 --release
 
+pub mod metadata;
 pub mod risk;
 
 /// Shared, wasm-independent request handling. A `Fetcher` performs one JSON-RPC
@@ -87,9 +88,29 @@ pub mod handler {
                 }
             }
         }
+        // 4) metadata mutability: derive the Metaplex metadata PDA and read is_mutable
+        //    (getAccountInfo base64 — not throttled like getTokenLargestAccounts).
+        if let Some(pda) = crate::metadata::metadata_pda(mint) {
+            if let Ok(resp) = fetch(rpc, "getAccountInfo", json!([pda, {"encoding":"base64"}])) {
+                facts.metadata = parse_metadata_resp(&resp);
+            }
+        }
 
         let report = assess(&facts);
         (report_json(mint, rpc, &facts, &report), true)
+    }
+
+    /// Extract the base64 account data from a getAccountInfo(base64) response and
+    /// parse the Metaplex metadata mutability out of it.
+    fn parse_metadata_resp(resp: &Value) -> Option<crate::metadata::MetadataInfo> {
+        use base64::{engine::general_purpose::STANDARD, Engine};
+        let result = resp.get("result").unwrap_or(resp);
+        let value = result.get("value")?;
+        let data = value.get("data")?;
+        // data is [ "<base64>", "base64" ]
+        let b64 = data.get(0).and_then(|x| x.as_str())?;
+        let bytes = STANDARD.decode(b64).ok()?;
+        crate::metadata::parse_metadata(&bytes)
     }
 
     fn is_plausible_pubkey(s: &str) -> bool {
@@ -149,6 +170,10 @@ pub mod handler {
                 "ui_amount": f.ui_supply,
                 "decimals": f.decimals,
             },
+            "metadata": f.metadata.as_ref().map(|m| json!({
+                "is_mutable": m.is_mutable,
+                "update_authority": m.update_authority,
+            })),
             "flags": flags,
             "top_holders": holders,
             "notes": r.notes,
@@ -268,6 +293,47 @@ pub mod handler {
             assert!(out.contains("\"risk_band\":\"CRITICAL\""));
             assert!(out.contains("mint_authority_present"));
             assert!(out.contains("freeze_authority_present"));
+        }
+
+        #[test]
+        fn assess_flags_mutable_metadata_live_path() {
+            use base64::{engine::general_purpose::STANDARD, Engine};
+            let mint = "So11111111111111111111111111111111111111112";
+            let pda = crate::metadata::metadata_pda(mint).unwrap();
+            // Craft a minimal mutable Metadata blob (is_mutable = 1, no creators).
+            let mut blob = vec![4u8];
+            blob.extend_from_slice(&[9u8; 32]); // update_authority
+            blob.extend_from_slice(&[2u8; 32]); // mint
+            for s in ["N", "S", "u"] {
+                blob.extend_from_slice(&(s.len() as u32).to_le_bytes());
+                blob.extend_from_slice(s.as_bytes());
+            }
+            blob.extend_from_slice(&0u16.to_le_bytes()); // seller_fee
+            blob.push(0); // creators None
+            blob.push(0); // primary_sale
+            blob.push(1); // is_mutable = true
+            let b64 = STANDARD.encode(&blob);
+            let acct = clean_mint();
+            let fetch = move |_u: &str, method: &str, params: Value| -> Result<Value, String> {
+                match method {
+                    "getAccountInfo" => {
+                        let first = params.get(0).and_then(|x| x.as_str()).unwrap_or("");
+                        if first == mint {
+                            Ok(acct.clone())
+                        } else if first == pda {
+                            Ok(json!({"result":{"value":{"data":[b64.clone(),"base64"]}}}))
+                        } else {
+                            Err("unexpected account".into())
+                        }
+                    }
+                    "getTokenLargestAccounts" => Ok(json!({"result":{"value":[]}})),
+                    other => Err(format!("unexpected {other}")),
+                }
+            };
+            let (out, ok) = run(&json!({"mint":mint}).to_string(), &fetch);
+            assert!(ok);
+            assert!(out.contains("metadata_mutable"), "mutable metadata must be flagged");
+            assert!(out.contains("\"is_mutable\":true"));
         }
 
         #[test]
