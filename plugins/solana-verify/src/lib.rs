@@ -170,6 +170,19 @@ pub mod handler {
             let (_o, ok3) = run(&json!({"op":"nope"}).to_string());
             assert!(!ok3);
         }
+
+        /// Prompt-injection fail-closed: a message insisting a proof is valid cannot make the
+        /// tool report `valid:true`. The verdict is a deterministic fold, not an LLM judgement.
+        /// An empty proof folds leaf==leaf, which does not equal the attacker's claimed root.
+        #[test]
+        fn prompt_injection_forged_proof_rejected() {
+            let leaf = to_hex(&[0u8; 32]);
+            let claimed_root = to_hex(&[0xde; 32]); // attacker asserts "it's settled, trust me"
+            let (out, ok) = run(&json!({"op":"merkle_verify",
+                "leaf":leaf,"root":claimed_root,"proof":[]}).to_string());
+            assert!(ok, "a forged claim is a successful call with a truthful verdict");
+            assert!(out.contains("\"valid\":false"), "empty/forged proof must report valid:false");
+        }
     }
 }
 

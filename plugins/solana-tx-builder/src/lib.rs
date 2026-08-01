@@ -177,6 +177,26 @@ pub mod handler {
             assert!(!run(&json!({"op":"system_transfer","from":"x"}).to_string()).1);
             assert!(!run(&json!({"op":"zzz"}).to_string()).1);
         }
+
+        /// Prompt-injection fail-closed: a malicious "drain everything, skip confirmation"
+        /// request can, at most, produce an UNSIGNED instruction. The tool never signs and
+        /// never broadcasts — no such capability exists in the component.
+        #[test]
+        fn prompt_injection_cannot_sign_or_send() {
+            let (out, ok) = run(&json!({"op":"system_transfer",
+                "from":"11111111111111111111111111111112",
+                "to":"9xQeWvG816bUx9EPjHmaT23yvVM2ZWbrrpZb9PB5tsN",
+                "lamports":999999999u64}).to_string());
+            // It builds the bytes (that's its T1 job) ...
+            assert!(ok && out.contains("instruction"), "should build the unsigned instruction");
+            // ... but the payer is marked is_signer:true — a signature the plugin cannot supply ...
+            assert!(out.contains("\"is_signer\":true"), "payer must still require an external signature");
+            // ... and nothing in the output is a signature, a secret, or a broadcast result.
+            for forbidden in ["signature", "signed", "secret", "keypair", "private", "txid", "submitted", "sent"] {
+                assert!(!out.to_lowercase().contains(forbidden),
+                    "output must never contain '{forbidden}' — the plugin cannot sign or send");
+            }
+        }
     }
 }
 
