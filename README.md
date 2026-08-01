@@ -1,7 +1,7 @@
 # zeroclaw-solana — Solana-native plugins for ZeroClaw 🦞
 
-Four WebAssembly **tool plugins** that give a [ZeroClaw](https://github.com/zeroclaw-labs/zeroclaw)
-agent Solana capabilities — two live, two offline, all **key-free**. Together they let an agent
+Five WebAssembly **tool plugins** that give a [ZeroClaw](https://github.com/zeroclaw-labs/zeroclaw)
+agent Solana capabilities — three live, two offline, all **key-free**. Together they let an agent
 **screen** a portfolio, **assess** a token's risk, **build** a transaction, and **verify** on-chain
 data from natural language, without ever holding a private key.
 
@@ -9,6 +9,7 @@ data from natural language, without ever holding a private key.
 |--------|-------|--------------|
 | [`solana-token-risk`](plugins/solana-token-risk) | **live (`http_client`)** | **Assesses a mint**: reads it over `wasi:http` and returns deterministic rug/honeypot risk evidence — mint & freeze authority, Token-2022 dangerous extensions (transfer hook, permanent delegate, transfer fee, non-transferable, default-frozen), mutable metadata, and holder concentration that separates off-curve LP vaults from whale wallets. |
 | [`solana-wallet-risk`](plugins/solana-wallet-risk) | **live (`http_client`)** | **Assesses a portfolio**: scans a wallet's SPL *and* Token-2022 holdings and reports which positions can be frozen, diluted, seized, blocked or taxed — with breadth-weighted wallet-level scoring. |
+| [`solana-tx-guard`](plugins/solana-tx-guard) | **live (`http_client`)** | **Guards a transaction before it is signed**: statically decodes it and flags dangerous instructions (SetAuthority, delegate Approve, CloseAccount, owner Assign), then simulates it live against mainnet to show the real success/failure and effect. |
 | [`solana-tx-builder`](plugins/solana-tx-builder) | offline | **Constructs**: PDAs, associated token accounts, SystemProgram & SPL-Token transfer instructions — the agent builds, a wallet signs. |
 | [`solana-verify`](plugins/solana-verify) | offline | **Verifies**: keccak-256 Merkle proofs (the TxODDS on-chain settlement primitive), ed25519 signatures, base58 pubkeys. |
 
@@ -16,14 +17,13 @@ data from natural language, without ever holding a private key.
 ZeroClaw tool plugins get outbound HTTP **only when they declare the `http_client` permission** —
 the host links `wasi:http` after validating that grant (see the tool-plugin guide, *"Tools that
 call the network"*). So the split is deliberate, by trust surface:
-- **`solana-token-risk`** and **`solana-wallet-risk`** genuinely need the chain, so they declare
+- **`solana-token-risk`**, **`solana-wallet-risk`** and **`solana-tx-guard`** genuinely need the chain, so they declare
   `http_client` and read live over `wasi:http` (via `waki`). Read-only: they fetch account state,
   never send a transaction.
 - **`solana-tx-builder` / `solana-verify`** are pure compute (`permissions = []`) — they need no
   network to build an instruction or fold a proof, so they take zero trust surface.
 
-An agent can therefore *screen a wallet, check a token is safe, build the transfer, and verify the
-result* — with the network grant confined to the two read-only scanners and **none holding a key**.
+An agent can therefore *screen a wallet, check a token is safe, build the transfer, guard it against the chain, and verify the result* — with the network grant confined to the two read-only scanners and **none holding a key**.
 
 ## Why these
 `solana-token-risk` is the plugin the sponsor said they'd *"like to exist most of all"* —
@@ -54,9 +54,9 @@ handles it.
 ./compose-demo.sh          # screen a wallet -> assess its riskiest mint -> build an unsigned exit -> verify
 ```
 `solana-wallet-risk` screens a wallet and surfaces the riskiest holding;
-`solana-token-risk` deep-dives that exact mint; `solana-tx-builder` constructs the
-**unsigned** exit transfer (the agent builds, a wallet signs); `solana-verify` is
-the deterministic trust anchor. Each tool's output feeds the next — the
+`solana-token-risk` deep-dives that exact mint; `solana-tx-builder` constructs the **unsigned** exit transfer;
+`solana-tx-guard` decodes and simulates it live before anyone signs; `solana-verify`
+is the deterministic trust anchor. Each tool's output feeds the next — the
 system-level story, not four isolated tools.
 
 ### Running in the real ZeroClaw runtime
@@ -70,12 +70,12 @@ cd plugins/solana-token-risk && ./demo.sh          # tests + live BONK vs USDC a
 ```
 
 ## Status
-- ✅ All four build to `wasm32-wasip2` components; exports verified with `wasm-tools`.
-  The two live plugins additionally import `wasi:http/outgoing-handler@0.2.4` (the http grant).
-- ✅ Tests: `solana-verify` 88 · `solana-token-risk` 78 · `solana-tx-builder` 56 · `solana-wallet-risk` 47 — **269 total**,
+- ✅ All five build to `wasm32-wasip2` components; exports verified with `wasm-tools`.
+  The three live plugins additionally import `wasi:http/outgoing-handler@0.2.4` (the http grant).
+- ✅ Tests: `solana-verify` 88 · `solana-token-risk` 78 · `solana-tx-builder` 56 · `solana-wallet-risk` 47 · `solana-tx-guard` 26 — **295 total**,
   covering every risk flag and severity boundary, Merkle-fold conformance (known keccak/sha256
   vectors, forged/truncated/reordered proofs), real ed25519 signature verification and its failure
   modes, PDA/ATA derivation properties, exact instruction byte layouts, malformed-input handling,
   and a prompt-injection fail-closed test per plugin.
-- ✅ Key-free by construction: **no plugin ever takes a private key**; only the two risk scanners
+- ✅ Key-free by construction: **no plugin ever takes a private key**; only the three read-only scanners
   take a (read-only) network grant.

@@ -6,7 +6,8 @@
 #   solana-wallet-risk  →  screen a wallet, find the riskiest holding
 #   solana-token-risk   →  deep-dive that exact mint, confirm the threat
 #   solana-tx-builder   →  construct an UNSIGNED exit transfer (agent builds, wallet signs)
-#   solana-verify       →  the no-custody settlement primitive the flow rests on
+#   solana-tx-guard    →  decode + simulate the built tx before it is signed
+#   solana-verify      →  the no-custody settlement primitive the flow rests on
 #
 # Nothing is mocked and nothing is signed. One network grant, no keys.
 set -euo pipefail
@@ -29,7 +30,7 @@ echo " wallet: $WALLET"
 echo "════════════════════════════════════════════════════════════════"
 
 echo
-echo "── STEP 1/4 · solana-wallet-risk: screen the wallet ─────────────"
+echo "── STEP 1/5 · solana-wallet-risk: screen the wallet ─────────────"
 rpc "{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"getTokenAccountsByOwner\",\"params\":[\"$WALLET\",{\"programId\":\"$SPL\"},{\"encoding\":\"jsonParsed\"}]}" > "$TMP/spl.json"
 rpc "{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"getTokenAccountsByOwner\",\"params\":[\"$WALLET\",{\"programId\":\"$T22\"},{\"encoding\":\"jsonParsed\"}]}" > "$TMP/t22.json"
 MINTS=$(python3 - "$TMP/spl.json" "$TMP/t22.json" <<'PY'
@@ -70,7 +71,7 @@ echo "  → riskiest holding to investigate: ${WORST_MINT:-<none flagged>}"
 [ -z "$WORST_MINT" ] && { echo "  (no flagged holding; nothing to chain) "; exit 0; }
 
 echo
-echo "── STEP 2/4 · solana-token-risk: deep-dive that mint ────────────"
+echo "── STEP 2/5 · solana-token-risk: deep-dive that mint ────────────"
 echo "  (two lenses, same facts: wallet-risk banded it by PORTFOLIO exposure;"
 echo "   token-risk now rates the MINT's rug capability — a deep-dive can escalate.)"
 cp "$TMP/mints.json" "$TMP/one.json"
@@ -86,7 +87,7 @@ for f in d['flags']: print('   •',f['severity'].upper(),'—',f['title'])
 "
 
 echo
-echo "── STEP 3/4 · solana-tx-builder: build the UNSIGNED exit transfer ─"
+echo "── STEP 3/5 · solana-tx-builder: build the UNSIGNED exit transfer ─"
 echo "  moving the position to a cold wallet; the agent BUILDS, a wallet SIGNS."
 ( cd plugins/solana-tx-builder && cargo run --release --quiet --example run -- \
   "{\"op\":\"spl_transfer\",\"source\":\"$WALLET\",\"dest\":\"$SAFE_DEST\",\"authority\":\"$WALLET\",\"amount\":1}" 2>/dev/null ) \
@@ -101,7 +102,42 @@ print('  → returned an UNSIGNED instruction. No signature, no key, nothing sen
 "
 
 echo
-echo "── STEP 4/4 · solana-verify: the no-custody settlement primitive ─"
+echo "── STEP 4/5 · solana-tx-guard: is the built transaction safe to sign? ─"
+echo "  the agent doesn't sign blind — guard decodes the tx and simulates it live."
+GUARD_TX=$( ( cd plugins/solana-tx-builder && cargo run --release --quiet --example run -- \
+  "{\"op\":\"system_transfer\",\"from\":\"$WALLET\",\"to\":\"$SAFE_DEST\",\"lamports\":1000000}" 2>/dev/null ) )
+# serialize that instruction into a base64 tx for the guard (python, byte-accurate)
+TXB64=$(python3 - "$WALLET" "$SAFE_DEST" <<'PY'
+import base64,struct,sys
+A="123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz"
+def b58(s):
+    n=0
+    for c in s: n=n*58+A.index(c)
+    b=n.to_bytes((n.bit_length()+7)//8,"big"); return b"\x00"*(len(s)-len(s.lstrip("1")))+b
+def sv(n):
+    o=bytearray()
+    while True:
+        e=n&0x7f;n>>=7;o.append(e|0x80 if n else e)
+        if not n:break
+    return bytes(o)
+W=b58(sys.argv[1]);D=b58(sys.argv[2]);S=b"\x00"*32
+m=bytes([1,0,1])+sv(3)+W+D+S+b"\x00"*32+sv(1)+bytes([2])+sv(2)+bytes([0,1])+sv(12)+struct.pack("<IQ",2,1000000)
+print(base64.b64encode(sv(1)+b"\x00"*64+m).decode())
+PY
+)
+SIM=$(rpc "{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"simulateTransaction\",\"params\":[\"$TXB64\",{\"sigVerify\":false,\"replaceRecentBlockhash\":true,\"encoding\":\"base64\"}]}")
+echo "$SIM" > "$TMP/exit.sim.json"
+( cd plugins/solana-tx-guard && cargo run --release --quiet --example guard_file -- "$TXB64" "$TMP/exit.sim.json" 2>/dev/null ) \
+  | python3 -c "
+import sys,json
+d=json.load(sys.stdin)
+print('  verdict:',d['verdict'],'|',d['summary'])
+sim=d.get('simulation') or {}
+print('  live sim err:',json.dumps(sim.get('err')),'| units:',sim.get('units_consumed'))
+"
+
+echo
+echo "── STEP 5/5 · solana-verify: the no-custody settlement primitive ─"
 echo "  every step above is verifiable offline; verify folds a keccak Merkle proof"
 echo "  or checks an ed25519 signature deterministically — the trust anchor."
 ( cd plugins/solana-verify && cargo run --release --quiet --example run -- \
@@ -110,5 +146,5 @@ echo "  or checks an ed25519 signature deterministically — the trust anchor."
 
 echo
 echo "════════════════════════════════════════════════════════════════"
-echo " Chained: screen → assess → build → verify. One network grant, zero keys."
+echo " Chained: screen → assess → build → GUARD → verify. One network grant, zero keys."
 echo "════════════════════════════════════════════════════════════════"
