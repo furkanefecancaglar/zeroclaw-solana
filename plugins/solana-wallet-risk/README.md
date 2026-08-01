@@ -55,6 +55,18 @@ Honest failure modes, all tested:
 ```
 Optional `"rpc_url"` overrides the default (`api.mainnet-beta.solana.com`).
 
+### Live demo (real mainnet wallet, one command)
+
+```sh
+./demo.sh [WALLET_ADDRESS] [RPC_URL]   # defaults to a real, heavily-used mainnet wallet
+```
+`demo.sh` runs the test suite, then curls a live RPC for the wallet's SPL and
+Token-2022 accounts plus each top mint, and pipes them through the **exact same
+scoring core** the plugin runs. Verified output on a real wallet holding **3,015
+positions**: 5 of the 12 largest are exposed (one freezable, five dilutable),
+wallet band `HIGH` — and the report states plainly that the 3,003 smaller
+positions were not resolved rather than counting them as safe.
+
 ## Build & test
 
 ```sh
