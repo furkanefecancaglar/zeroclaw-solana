@@ -25,6 +25,10 @@ pub mod handler {
 
     pub const DEFAULT_RPC: &str = "https://api.mainnet-beta.solana.com";
 
+    /// How many top token accounts to resolve owners for (bounds the extra RPC
+    /// calls; concentration risk is driven by the very top holders).
+    pub const OWNER_RESOLVE_LIMIT: usize = 6;
+
     /// One Solana JSON-RPC call: (rpc_url, method, params) -> result Value or error.
     pub type Fetcher<'a> = dyn Fn(&str, &str, Value) -> Result<Value, String> + 'a;
 
@@ -66,6 +70,23 @@ pub mod handler {
         if let Ok(largest) = fetch(rpc, "getTokenLargestAccounts", json!([mint])) {
             apply_largest(&mut facts, &largest);
         }
+        // 3) resolve the owner of the top few token accounts so we can tell a
+        //    liquidity pool / protocol vault (off-curve owner) apart from a whale
+        //    keypair wallet. Best-effort: an unresolved owner just stays conservative.
+        let to_resolve: Vec<String> = facts
+            .top_holders
+            .iter()
+            .filter(|h| h.kind != OwnerKind::Burn && h.owner.is_none())
+            .take(OWNER_RESOLVE_LIMIT)
+            .map(|h| h.account.clone())
+            .collect();
+        for acct in to_resolve {
+            if let Ok(resp) = fetch(rpc, "getAccountInfo", json!([acct, {"encoding":"jsonParsed"}])) {
+                if let Some(owner) = parse_token_account_owner(&resp) {
+                    facts.set_owner(&acct, &owner);
+                }
+            }
+        }
 
         let report = assess(&facts);
         (report_json(mint, rpc, &facts, &report), true)
@@ -92,6 +113,25 @@ pub mod handler {
                 })
             })
             .collect();
+        let holders: Vec<Value> = f
+            .top_holders
+            .iter()
+            .take(5)
+            .map(|h| {
+                let pct = if f.ui_supply > 0.0 { 100.0 * h.ui_amount / f.ui_supply } else { 0.0 };
+                json!({
+                    "account": h.account,
+                    "owner": h.owner,
+                    "kind": match h.kind {
+                        OwnerKind::Burn => "burn",
+                        OwnerKind::Protocol => "protocol/lp",
+                        OwnerKind::Wallet => "wallet",
+                        OwnerKind::Unknown => "unresolved",
+                    },
+                    "pct_of_supply": (pct * 100.0).round() / 100.0,
+                })
+            })
+            .collect();
         json!({
             "ok": true,
             "op": "assess",
@@ -110,6 +150,7 @@ pub mod handler {
                 "decimals": f.decimals,
             },
             "flags": flags,
+            "top_holders": holders,
             "notes": r.notes,
             "disclaimer": "Deterministic on-chain evidence, not financial advice. Absence of flags is not a guarantee of safety.",
         })
@@ -171,6 +212,39 @@ pub mod handler {
                 "decimals":6,"isInitialized":true,"supply":"1000000000000",
                 "mintAuthority":null,"freezeAuthority":null
             },"type":"mint"},"program":"spl-token"},"owner":"x"}}})
+        }
+
+        fn token_account(owner: &str) -> Value {
+            json!({"result":{"value":{"data":{"parsed":{"type":"account",
+                "info":{"owner":owner,"mint":"m","tokenAmount":{"uiAmount":0}}},"program":"spl-token"}}}})
+        }
+
+        // The mint's clean, so the ONLY possible flag is concentration; we verify the
+        // owner-resolution pass attaches the owner and classifies it (not left "unresolved").
+        #[test]
+        fn owner_resolution_pass_attaches_and_classifies_owner() {
+            let mint = "So11111111111111111111111111111111111111112";
+            // A real, decodable pubkey used as the holder's owner so classify runs.
+            let owner_key = "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v";
+            let acct = clean_mint();
+            let fetch = move |_u: &str, method: &str, params: Value| -> Result<Value, String> {
+                match method {
+                    "getAccountInfo" => {
+                        let first = params.get(0).and_then(|x| x.as_str()).unwrap_or("");
+                        if first == mint { Ok(acct.clone()) } else { Ok(token_account(owner_key)) }
+                    }
+                    "getTokenLargestAccounts" => Ok(json!({"result":{"value":[
+                        {"address":"HolderAcct","uiAmount":700000.0}
+                    ]}})),
+                    other => Err(format!("unexpected {other}")),
+                }
+            };
+            let (out, ok) = run(&json!({"mint":mint}).to_string(), &fetch);
+            assert!(ok);
+            let v: Value = serde_json::from_str(&out).unwrap();
+            let holder = &v["top_holders"][0];
+            assert_eq!(holder["owner"], json!(owner_key), "owner must be resolved and attached");
+            assert_ne!(holder["kind"], json!("unresolved"), "a decodable owner must be classified");
         }
 
         #[test]

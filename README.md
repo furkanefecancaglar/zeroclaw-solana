@@ -55,7 +55,7 @@ cd plugins/solana-token-risk && ./demo.sh          # tests + live BONK vs USDC a
 ## Status
 - ✅ All three build to `wasm32-wasip2` components; exports verified with `wasm-tools`.
   `solana-token-risk` additionally imports `wasi:http/outgoing-handler@0.2.4` (the http grant).
-- ✅ Tests: `solana-token-risk` 14 · `solana-verify` 7 · `solana-tx-builder` 8 — **29 total**,
+- ✅ Tests: `solana-token-risk` 19 · `solana-verify` 7 · `solana-tx-builder` 8 — **34 total**,
   each plugin including a prompt-injection fail-closed test.
 - ✅ Key-free by construction: no plugin ever takes a private key; only `solana-token-risk` takes
   a (read-only) network grant.

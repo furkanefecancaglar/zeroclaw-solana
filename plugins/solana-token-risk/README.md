@@ -64,7 +64,23 @@ tests exercise the exact code path the component runs, with a mock RPC. Only
 ```
 `demo.sh` runs the full test suite, then curls a real Solana RPC for the mint and
 pipes the response through the **exact same scoring core** the plugin runs —
-proving the evidence against live chain state with no mocking.
+proving the authority/extension evidence against live chain state with no mocking.
+
+**Holder-concentration note:** the whale-vs-LP analysis needs `getTokenLargestAccounts`,
+which most *public* RPC endpoints throttle or block (mainnet-beta returns HTTP 429 for it).
+When the RPC declines it, the report says so and simply omits the concentration flag — it
+never fabricates holders. Point `rpc_url` at a keyed/dedicated RPC to populate holder
+analysis. The LP-vs-wallet logic itself is proven deterministically by the unit tests
+`protocol_lp_owner_is_not_counted_as_a_whale` and `on_curve_wallet_holding_the_supply_is_flagged`.
+
+## How holder owners are classified
+For the top holders, the plugin resolves each token account's **owner** and checks whether
+that owner is a valid ed25519 curve point:
+- **off-curve** → a program-derived account (AMM/LP vault, protocol, escrow) — this is
+  liquidity, not a whale, so it is *not* counted as concentration risk;
+- **on-curve** → a real keypair wallet (a person or a CEX) — counted toward whale risk.
+
+This needs no hard-coded list of known pools: the curve check generalizes to any protocol.
 
 ## Manifest
 
