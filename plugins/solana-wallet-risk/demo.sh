@@ -6,10 +6,17 @@
 #      plugin runs — real chain data, no mocking.
 #
 # Usage: ./demo.sh [WALLET_ADDRESS] [RPC_URL]
+#
+# The default wallet holds ~142 positions and scans in about 6 seconds. It also
+# scales: a wallet with 3,015 positions scans fine, it just spends longer pulling
+# the account list from the RPC. Try:
+#   ./demo.sh 9WzDXwBbmkg8ZTbNMqUxvQRAyrZzDsGYdLVL9zYtAWWM
 set -euo pipefail
+# Don't die on SIGPIPE when the caller pipes us into `head`.
+trap '' PIPE
 cd "$(dirname "$0")"
 
-WALLET="${1:-9WzDXwBbmkg8ZTbNMqUxvQRAyrZzDsGYdLVL9zYtAWWM}"
+WALLET="${1:-GThUX1Atko4tqhN2NaiTazWSeFWMuiUvfFnyJyUghFMJ}"
 RPC="${2:-https://api.mainnet-beta.solana.com}"
 SPL_PROGRAM="TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA"
 T22_PROGRAM="TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBqCXEpPxuEb"
