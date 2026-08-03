@@ -53,10 +53,11 @@ pub mod handler {
         match op {
             "merkle_verify" => merkle(&v),
             "merkle_verify_onchain" => merkle_onchain(&v, fetch),
+            "merkle_verify_batch" => merkle_batch(&v, fetch),
             "ed25519_verify" => ed25519(&v),
             "pubkey_decode" => pubkey_decode(&v),
             "pubkey_encode" => pubkey_encode(&v),
-            "" => (err("missing 'op' (merkle_verify|merkle_verify_onchain|ed25519_verify|pubkey_decode|pubkey_encode)"), false),
+            "" => (err("missing 'op' (merkle_verify|merkle_verify_onchain|merkle_verify_batch|ed25519_verify|pubkey_decode|pubkey_encode)"), false),
             other => (err(&format!("unknown op '{other}'")), false),
         }
     }
@@ -108,46 +109,43 @@ pub mod handler {
     /// takes the 32 bytes at `offset` (default 0) as the root, and folds the proof against
     /// it. This closes the trust gap — the settlement root comes from the chain, not the
     /// prompt — so a prompt-injected "trust me, it's settled" cannot flip the verdict.
-    fn merkle_onchain(v: &Value, fetch: &Fetcher) -> (String, bool) {
-        let leaf = match field_hex32(v, "leaf") { Ok(x) => x, Err(e) => return (err(&e), false) };
-        let account = match v.get("account").and_then(|x| x.as_str()) {
-            Some(a) => a.to_string(),
-            None => return (err("missing 'account' (base58 pubkey holding the anchored root)"), false),
-        };
-        // reject a non-base58 / wrong-length account early with a clear message.
+    /// Read a 32-byte anchored root from an account's data at `offset` over RPC. Shared by
+    /// `merkle_verify_onchain` and `merkle_verify_batch`. Returns (root, slot, account, offset).
+    fn read_onchain_root(v: &Value, fetch: &Fetcher) -> Result<([u8; 32], Option<u64>, String, usize), String> {
+        let account = v.get("account").and_then(|x| x.as_str())
+            .ok_or("missing 'account' (base58 pubkey holding the anchored root)")?
+            .to_string();
         if b58_32(&account).is_err() {
-            return (err("'account' must be a base58 32-byte Solana pubkey"), false);
+            return Err("'account' must be a base58 32-byte Solana pubkey".into());
         }
         let offset = v.get("offset").and_then(|x| x.as_u64()).unwrap_or(0) as usize;
-        let proof = match parse_proof(v) { Ok(p) => p, Err(e) => return (err(&e), false) };
         let rpc = v.get("rpc_url").and_then(|x| x.as_str()).unwrap_or(DEFAULT_RPC);
-
-        let resp = match fetch(rpc, "getAccountInfo", json!([account, {"encoding": "base64"}])) {
-            Ok(r) => r,
-            Err(e) => return (err(&format!("RPC getAccountInfo failed: {e}")), false),
-        };
+        let resp = fetch(rpc, "getAccountInfo", json!([account, {"encoding": "base64"}]))
+            .map_err(|e| format!("RPC getAccountInfo failed: {e}"))?;
         let value = &resp["result"]["value"];
         if value.is_null() {
-            return (err(&format!("account {account} not found on chain")), false);
+            return Err(format!("account {account} not found on chain"));
         }
-        let b64 = match value["data"][0].as_str() {
-            Some(s) => s,
-            None => return (err("account data missing (expected base64 encoding)"), false),
-        };
-        let data = match base64::engine::general_purpose::STANDARD.decode(b64) {
-            Ok(d) => d,
-            Err(e) => return (err(&format!("account data is not valid base64: {e}")), false),
-        };
+        let b64 = value["data"][0].as_str()
+            .ok_or("account data missing (expected base64 encoding)")?;
+        let data = base64::engine::general_purpose::STANDARD.decode(b64)
+            .map_err(|e| format!("account data is not valid base64: {e}"))?;
         if data.len() < offset + 32 {
-            return (err(&format!(
-                "account data too short: need 32 bytes at offset {offset}, have {}",
-                data.len()
-            )), false);
+            return Err(format!("account data too short: need 32 bytes at offset {offset}, have {}", data.len()));
         }
         let mut root = [0u8; 32];
         root.copy_from_slice(&data[offset..offset + 32]);
         let slot = resp["result"]["context"]["slot"].as_u64();
+        Ok((root, slot, account, offset))
+    }
 
+    fn merkle_onchain(v: &Value, fetch: &Fetcher) -> (String, bool) {
+        let leaf = match field_hex32(v, "leaf") { Ok(x) => x, Err(e) => return (err(&e), false) };
+        let proof = match parse_proof(v) { Ok(p) => p, Err(e) => return (err(&e), false) };
+        let (root, slot, account, offset) = match read_onchain_root(v, fetch) {
+            Ok(x) => x,
+            Err(e) => return (err(&e), false),
+        };
         let valid = merkle_verify(leaf, &proof, root);
         (json!({
             "ok": true, "op": "merkle_verify_onchain", "valid": valid,
@@ -156,6 +154,46 @@ pub mod handler {
             "hash": "keccak256", "depth": proof.len(),
             "account": account, "offset": offset, "slot": slot,
             "root": to_hex(&root), "source": "on-chain",
+        }).to_string(), true)
+    }
+
+    /// Verify MANY settlement claims against ONE anchored root in a single call — the
+    /// natural TxODDS operation: a batch of leaves each with its proof, folded against a
+    /// root that is either supplied (`root`) or read once from chain (`account`/`offset`).
+    /// One RPC read covers the whole batch; GREEN only if every claim folds.
+    fn merkle_batch(v: &Value, fetch: &Fetcher) -> (String, bool) {
+        let (root, slot, source) = if v.get("root").is_some() {
+            match field_hex32(v, "root") { Ok(r) => (r, None, "supplied"), Err(e) => return (err(&e), false) }
+        } else if v.get("account").is_some() {
+            match read_onchain_root(v, fetch) { Ok((r, s, _, _)) => (r, s, "on-chain"), Err(e) => return (err(&e), false) }
+        } else {
+            return (err("provide either 'root' (32-byte hex) or 'account' (read the root from chain)"), false);
+        };
+        let items = match v.get("items").and_then(|x| x.as_array()) {
+            Some(a) if !a.is_empty() => a,
+            _ => return (err("missing non-empty 'items' array of {leaf, proof}"), false),
+        };
+        let mut results = Vec::with_capacity(items.len());
+        let mut valid_count = 0usize;
+        for (i, it) in items.iter().enumerate() {
+            let leaf = match field_hex32(it, "leaf") { Ok(x) => x, Err(e) => return (err(&format!("items[{i}]: {e}")), false) };
+            let proof = match parse_proof(it) { Ok(p) => p, Err(e) => return (err(&format!("items[{i}]: {e}")), false) };
+            let valid = merkle_verify(leaf, &proof, root);
+            if valid { valid_count += 1; }
+            results.push(json!({ "index": i, "leaf": to_hex(&leaf), "valid": valid, "depth": proof.len() }));
+        }
+        let all = valid_count == items.len();
+        (json!({
+            "ok": true, "op": "merkle_verify_batch",
+            "agent_verdict": if all { "GREEN" } else { "RED" },
+            "reason": if all {
+                format!("all {} claims fold to the anchored root", items.len())
+            } else {
+                format!("{} of {} claims do NOT fold to the anchored root — rejected", items.len() - valid_count, items.len())
+            },
+            "hash": "keccak256", "source": source, "slot": slot,
+            "root": to_hex(&root), "count": items.len(), "valid_count": valid_count,
+            "all_valid": all, "items": results,
         }).to_string(), true)
     }
 
@@ -202,13 +240,19 @@ pub mod handler {
     pub const SCHEMA: &str = r#"{
       "type": "object",
       "properties": {
-        "op": {"type": "string", "enum": ["merkle_verify","merkle_verify_onchain","ed25519_verify","pubkey_decode","pubkey_encode"],
-               "description": "Which Solana check to run. merkle_verify_onchain reads the anchored root live from chain; the rest are local no-network."},
+        "op": {"type": "string", "enum": ["merkle_verify","merkle_verify_onchain","merkle_verify_batch","ed25519_verify","pubkey_decode","pubkey_encode"],
+               "description": "Which Solana check to run. merkle_verify_onchain/batch read the anchored root live from chain; merkle_verify_batch folds many claims against one root in a single call; the rest are local no-network."},
         "leaf": {"type": "string", "description": "merkle_verify[_onchain]: 32-byte leaf hash, hex."},
-        "root": {"type": "string", "description": "merkle_verify: 32-byte anchored root, hex."},
-        "account": {"type": "string", "description": "merkle_verify_onchain: base58 account holding the anchored root on chain."},
-        "offset": {"type": "integer", "description": "merkle_verify_onchain: byte offset of the 32-byte root in the account data (default 0)."},
-        "rpc_url": {"type": "string", "description": "merkle_verify_onchain: optional Solana RPC endpoint (defaults to mainnet-beta)."},
+        "root": {"type": "string", "description": "merkle_verify / merkle_verify_batch: 32-byte anchored root, hex (batch may instead read it from chain via account)."},
+        "account": {"type": "string", "description": "merkle_verify_onchain / merkle_verify_batch: base58 account holding the anchored root on chain."},
+        "offset": {"type": "integer", "description": "merkle_verify_onchain / merkle_verify_batch: byte offset of the 32-byte root in the account data (default 0)."},
+        "rpc_url": {"type": "string", "description": "on-chain ops: optional Solana RPC endpoint (defaults to mainnet-beta)."},
+        "items": {"type": "array", "description": "merkle_verify_batch: claims to fold against the one root.",
+                  "items": {"type": "object",
+                    "properties": {"leaf": {"type": "string"},
+                                   "proof": {"type": "array", "items": {"type": "object",
+                                     "properties": {"hash": {"type": "string"}, "right": {"type": "boolean"}}, "required": ["hash"]}}},
+                    "required": ["leaf"]}},
         "proof": {"type": "array", "description": "merkle_verify[_onchain]: sibling path.",
                   "items": {"type": "object",
                     "properties": {"hash": {"type": "string"}, "right": {"type": "boolean"}},
@@ -336,6 +380,75 @@ pub mod handler {
             let (out, ok) = run(&json!({"op":"merkle_verify_onchain","account":"not-base58!!",
                 "leaf":to_hex(&[0u8;32]),"proof":[]}).to_string(), &unreachable_fetch);
             assert!(!ok && out.contains("base58"));
+        }
+
+        // Two leaves of the same 2-leaf tree, plus the shared root.
+        fn two_leaf_tree() -> ([u8; 32], String, String, String, String) {
+            let a_raw = keccak256(b"leaf-a");
+            let b_raw = keccak256(b"leaf-b");
+            let mut buf = [0u8; 64];
+            buf[..32].copy_from_slice(&a_raw);
+            buf[32..].copy_from_slice(&b_raw);
+            let root = keccak256(&buf);
+            (root, to_hex(&a_raw), to_hex(&b_raw), to_hex(&a_raw), to_hex(&b_raw))
+        }
+
+        #[test]
+        fn merkle_batch_all_valid_is_green() {
+            let (root, a, b, _, _) = two_leaf_tree();
+            // Two claims: leaf a (sibling b on the right) and leaf b (sibling a on the left).
+            let args = json!({"op":"merkle_verify_batch","root":to_hex(&root),"items":[
+                {"leaf":a,"proof":[{"hash":b,"right":true}]},
+                {"leaf":b,"proof":[{"hash":a,"right":false}]}
+            ]}).to_string();
+            let (out, ok) = run(&args, &unreachable_fetch);
+            assert!(ok, "{out}");
+            assert!(out.contains("\"all_valid\":true") && out.contains("\"valid_count\":2"));
+            assert!(out.contains("\"agent_verdict\":\"GREEN\""), "{out}");
+            assert!(out.contains("\"source\":\"supplied\""));
+        }
+
+        #[test]
+        fn merkle_batch_one_forged_claim_is_red() {
+            let (root, a, b, _, _) = two_leaf_tree();
+            let forged = to_hex(&keccak256(b"evil"));
+            let args = json!({"op":"merkle_verify_batch","root":to_hex(&root),"items":[
+                {"leaf":a,"proof":[{"hash":b.clone(),"right":true}]},
+                {"leaf":forged,"proof":[{"hash":b,"right":true}]}
+            ]}).to_string();
+            let (out, ok) = run(&args, &unreachable_fetch);
+            assert!(ok, "{out}");
+            assert!(out.contains("\"all_valid\":false") && out.contains("\"valid_count\":1"));
+            assert!(out.contains("\"agent_verdict\":\"RED\""), "one bad claim rejects the batch: {out}");
+        }
+
+        #[test]
+        fn merkle_batch_reads_root_from_chain() {
+            let (root, a, b, _, _) = two_leaf_tree();
+            let acct = "6pW64gN1s2uqjHkn1unFeEjAwJkPGHoppGvS715wyP2J";
+            let fetch = mock_account_with_root(root, 8, 424242);
+            let args = json!({"op":"merkle_verify_batch","account":acct,"offset":8,"items":[
+                {"leaf":a,"proof":[{"hash":b,"right":true}]}
+            ]}).to_string();
+            let (out, ok) = run(&args, &fetch);
+            assert!(ok, "{out}");
+            assert!(out.contains("\"all_valid\":true") && out.contains("\"source\":\"on-chain\""));
+            assert!(out.contains("\"slot\":424242"));
+        }
+
+        #[test]
+        fn merkle_batch_requires_root_or_account() {
+            let (_r, a, b, _, _) = two_leaf_tree();
+            let (out, ok) = run(&json!({"op":"merkle_verify_batch","items":[
+                {"leaf":a,"proof":[{"hash":b,"right":true}]}]}).to_string(), &unreachable_fetch);
+            assert!(!ok && out.contains("either 'root'"));
+        }
+
+        #[test]
+        fn merkle_batch_rejects_empty_items() {
+            let (root, _a, _b, _, _) = two_leaf_tree();
+            let (out, ok) = run(&json!({"op":"merkle_verify_batch","root":to_hex(&root),"items":[]}).to_string(), &unreachable_fetch);
+            assert!(!ok && out.contains("non-empty 'items'"));
         }
     }
 }

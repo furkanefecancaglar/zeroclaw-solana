@@ -13,7 +13,7 @@ fail-closed even though each can now read the chain.
 | [`solana-wallet-risk`](plugins/solana-wallet-risk) | **live · `http_client`** | **Assesses a portfolio**: scans a wallet's SPL *and* Token-2022 holdings and reports which positions can be frozen, diluted, seized, blocked or taxed — with breadth-weighted wallet-level scoring. |
 | [`solana-tx-guard`](plugins/solana-tx-guard) | **live · `http_client`** | **Guards a transaction before it is signed**: statically decodes it across System, SPL-Token/Token-2022, **BPF Upgradeable Loader (program-upgrade hijack), Stake and Vote** programs and flags dangerous instructions (SetAuthority/Upgrade, delegate Approve, FreezeAccount, CloseAccount, stake/vote Authorize, owner Assign), then simulates it live against mainnet and computes the **real balance effect** — it reports exactly how many lamports the fee payer would lose and escalates to DANGEROUS on a genuine drain even when the static decode looks benign. |
 | [`solana-tx-builder`](plugins/solana-tx-builder) | **live · `http_client`** | **Constructs**: PDAs, associated token accounts, SystemProgram & SPL-Token transfer instructions. Its live `prepare_transfer` op reads a recent blockhash and checks the recipient exists on chain, so the transfer is **broadcast-ready and typo-safe** — the agent builds, a wallet signs; it never signs or sends. |
-| [`solana-verify`](plugins/solana-verify) | **live · `http_client`** | **Verifies**: keccak-256 Merkle proofs (the TxODDS on-chain settlement primitive), ed25519 signatures, base58 pubkeys. Its live `merkle_verify_onchain` op reads the anchored root **straight from chain**, so a proof is checked against real on-chain state — not a caller-supplied root. |
+| [`solana-verify`](plugins/solana-verify) | **live · `http_client`** | **Verifies**: keccak-256 Merkle proofs (the TxODDS on-chain settlement primitive), ed25519 signatures, base58 pubkeys. Its live `merkle_verify_onchain` op reads the anchored root **straight from chain**, and `merkle_verify_batch` folds **many settlement claims against one root in a single call** (one RPC read for the whole batch) — GREEN only if every claim folds. |
 
 ## The network model (live, but least-privilege)
 ZeroClaw tool plugins get outbound HTTP **only when they declare the `http_client` permission** —
@@ -43,7 +43,7 @@ Mirrors [`zeroclaw-labs/zeroclaw-plugins`](https://github.com/zeroclaw-labs/zero
 
 ## Build & test
 
-**One command** — builds all five wasm components, runs all 312 tests, prints the
+**One command** — builds all five wasm components, runs all 317 tests, prints the
 http-import / tool-export proof per plugin:
 ```bash
 ./setup.sh            # or ./setup.sh --quick to skip the wasm builds and just run tests
@@ -83,7 +83,7 @@ cd plugins/solana-token-risk && ./demo.sh          # tests + live BONK vs USDC a
 ## Status
 - ✅ All five build to `wasm32-wasip2` components; exports verified with `wasm-tools`.
   All five import `wasi:http/outgoing-handler@0.2.4` (the read-only http grant).
-- ✅ Tests: `solana-verify` 91 · `solana-token-risk` 79 · `solana-tx-builder` 59 · `solana-wallet-risk` 48 · `solana-tx-guard` 35 — **312 total**,
+- ✅ Tests: `solana-verify` 96 · `solana-token-risk` 79 · `solana-tx-builder` 59 · `solana-wallet-risk` 48 · `solana-tx-guard` 35 — **317 total**,
   covering every risk flag and severity boundary, Merkle-fold conformance (known keccak/sha256
   vectors, forged/truncated/reordered proofs) plus reading the anchored root live from chain, real
   ed25519 signature verification and its failure modes, PDA/ATA derivation properties, exact
