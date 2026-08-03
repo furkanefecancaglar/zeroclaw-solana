@@ -34,7 +34,7 @@ transaction guard (there are several too). The edge here is not one feature — 
 - **Settlement verification tied to a real deployed engine.** `solana-verify` folds keccak Merkle
   proofs to an anchored root read **straight from chain**, and `merkle_verify_batch` checks many
   settlement claims against one root in a single call — mirroring a **deployed TxODDS on-chain
-  settlement engine** we actually run. Nobody else has that story.
+  settlement engine** we actually run — a provenance that is genuinely hard to copy.
 - **One vocabulary the agent can act on.** Every tool returns the same `agent_verdict`
   (`RED`/`AMBER`/`GREEN`) + one-line `reason`, so the model gets an identical, actionable shape from
   all five.
