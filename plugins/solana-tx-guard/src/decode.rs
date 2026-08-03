@@ -8,6 +8,9 @@
 
 // ── known program ids ───────────────────────────────────────────────────────
 pub const SYSTEM: &str = "11111111111111111111111111111111";
+pub const BPF_UPGRADEABLE: &str = "BPFLoaderUpgradeab1e11111111111111111111111";
+pub const STAKE: &str = "Stake11111111111111111111111111111111111111";
+pub const VOTE: &str = "Vote111111111111111111111111111111111111111";
 pub const TOKEN: &str = "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA";
 pub const TOKEN_2022: &str = "TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBqCXEpPxuEb";
 pub const ATA: &str = "ATokenGPvbdGVxr1b2hvZbsiqW5xWH25efTNsLJA8knL";
@@ -82,6 +85,9 @@ fn read_shortvec_len(b: &[u8], pos: &mut usize) -> Option<usize> {
 fn program_name(id: &str) -> &'static str {
     match id {
         SYSTEM => "System",
+        BPF_UPGRADEABLE => "BPFUpgradeableLoader",
+        STAKE => "Stake",
+        VOTE => "Vote",
         TOKEN => "SPL-Token",
         TOKEN_2022 => "Token-2022",
         ATA => "AssociatedTokenAccount",
@@ -253,16 +259,22 @@ fn classify(
                         format!("grants a delegate the right to spend your tokens{}. Revoke-able, but active until you do.",
                             amt.map(|a| format!(" (up to {a})")).unwrap_or_default()));
                 }
-                12 => {
-                    // ApproveChecked
+                13 => {
+                    // ApproveChecked (tag 13 — NOT 12; 12 is TransferChecked)
                     push(findings, ix, program, pname, "ApproveChecked", Severity::High,
                         "grants a delegate spending rights over your token account.".into());
                 }
+                5 => push(findings, ix, program, pname, "Revoke", Severity::Info,
+                    "revokes a previously-approved delegate (safe — removes spending rights).".into()),
+                10 => push(findings, ix, program, pname, "FreezeAccount", Severity::High,
+                    "freezes a token account — after this its holder cannot move the tokens (needs freeze authority).".into()),
+                11 => push(findings, ix, program, pname, "ThawAccount", Severity::Info,
+                    "unfreezes a previously-frozen token account.".into()),
                 9 => push(findings, ix, program, pname, "CloseAccount", Severity::High,
                     format!("closes a token account and sends its rent lamports to {}.", key_of(2).chars().take(8).collect::<String>())),
-                8 => push(findings, ix, program, pname, "Burn", Severity::Medium,
+                8 | 15 => push(findings, ix, program, pname, "Burn", Severity::Medium,
                     "permanently destroys tokens from an account.".into()),
-                7 => push(findings, ix, program, pname, "MintTo", Severity::Low,
+                7 | 14 => push(findings, ix, program, pname, "MintTo", Severity::Low,
                     "mints new tokens (only works if you hold the mint authority).".into()),
                 3 => {
                     let amt = le_u64(data, 1);
@@ -270,6 +282,49 @@ fn classify(
                         format!("moves {} token base units to {}.",
                             amt.map(|a| a.to_string()).unwrap_or("?".into()), key_of(1).chars().take(8).collect::<String>()));
                 }
+                12 => {
+                    // TransferChecked (tag 12) — a normal transfer with decimals asserted.
+                    let amt = le_u64(data, 1);
+                    push(findings, ix, program, pname, "TransferChecked", Severity::Info,
+                        format!("moves {} token base units to {}.",
+                            amt.map(|a| a.to_string()).unwrap_or("?".into()), key_of(2).chars().take(8).collect::<String>()));
+                }
+                _ => {}
+            }
+        }
+        "BPFUpgradeableLoader" => {
+            let tag = data.get(0..4).and_then(|b| b.try_into().ok()).map(u32::from_le_bytes).unwrap_or(u32::MAX);
+            match tag {
+                3 => push(findings, ix, program, pname, "SetAuthority", Severity::Critical,
+                    "changes a program's UPGRADE AUTHORITY — whoever holds it can replace the program's code at will. A hijack vector.".into()),
+                4 => push(findings, ix, program, pname, "Upgrade", Severity::Critical,
+                    "REPLACES a deployed program's code with a new buffer — the on-chain logic changes after this.".into()),
+                7 => push(findings, ix, program, pname, "SetAuthorityChecked", Severity::Critical,
+                    "changes a program's upgrade authority (checked variant) — a hijack vector.".into()),
+                5 => push(findings, ix, program, pname, "Close", Severity::High,
+                    "closes a program or buffer account and drains its lamports.".into()),
+                _ => {}
+            }
+        }
+        "Stake" => {
+            let tag = data.get(0..4).and_then(|b| b.try_into().ok()).map(u32::from_le_bytes).unwrap_or(u32::MAX);
+            match tag {
+                1 | 10 => push(findings, ix, program, pname, "Authorize", Severity::High,
+                    "changes a stake account's staker/withdraw authority — hands control of the stake to another key.".into()),
+                4 => push(findings, ix, program, pname, "Withdraw", Severity::High,
+                    "withdraws lamports out of a stake account.".into()),
+                8 => push(findings, ix, program, pname, "AuthorizeWithSeed", Severity::High,
+                    "changes a stake account's authority via a derived seed — hands control of the stake to another key.".into()),
+                _ => {}
+            }
+        }
+        "Vote" => {
+            let tag = data.get(0..4).and_then(|b| b.try_into().ok()).map(u32::from_le_bytes).unwrap_or(u32::MAX);
+            match tag {
+                3 | 10 => push(findings, ix, program, pname, "Authorize", Severity::High,
+                    "changes a vote account's voter/withdraw authority — hands control of the vote account to another key.".into()),
+                4 => push(findings, ix, program, pname, "Withdraw", Severity::High,
+                    "withdraws lamports out of a vote account.".into()),
                 _ => {}
             }
         }

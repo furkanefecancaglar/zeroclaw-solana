@@ -152,7 +152,8 @@ fn system_transfer_is_info_and_reports_lamports() {
 
 #[test]
 fn an_unknown_program_call_is_flagged_for_review() {
-    let unknown = b58("Stake11111111111111111111111111111111111111");
+    // A real program that is not on our known-safe list (Jupiter aggregator).
+    let unknown = b58("JUP6LkbZbjS1jKKwapdHNy74zcZ3tLUZoi5QNyVTaV4");
     let keys = [wallet(), unknown];
     let tx = build(&keys, &[(1, vec![0], vec![1, 2, 3])]);
     let d = decode_tx(&tx).unwrap();
@@ -399,4 +400,70 @@ fn schema_is_valid_json_and_documents_the_op() {
     assert_eq!(v["type"], "object");
     assert!(v["required"].as_array().unwrap().contains(&json!("transaction")));
     assert!(handler::SCHEMA.contains("guard"));
+}
+
+// ── broadened program coverage (backlog #2): program-hijack, stake/vote, freeze ──
+
+fn tx_with(program_id: &str, tag_u32: u32) -> String {
+    let keys = [wallet(), some_key(), b58(program_id)];
+    let data = tag_u32.to_le_bytes().to_vec();
+    STANDARD.encode(build(&keys, &[(2, vec![0, 1], data)]))
+}
+
+#[test]
+fn bpf_upgrade_authority_change_is_critical() {
+    // Changing a program's upgrade authority is a hijack vector — must be DANGEROUS.
+    let f = sim(Value::Null);
+    let (out, ok) = handler::run(&json!({"transaction": tx_with(BPF_UPGRADEABLE, 3)}).to_string(), &f);
+    assert!(ok, "{out}");
+    assert!(out.contains("\"verdict\":\"DANGEROUS\""), "{out}");
+    assert!(out.contains("SetAuthority") && out.contains("UPGRADE AUTHORITY"));
+}
+
+#[test]
+fn bpf_program_upgrade_is_critical() {
+    let f = sim(Value::Null);
+    let (out, _) = handler::run(&json!({"transaction": tx_with(BPF_UPGRADEABLE, 4)}).to_string(), &f);
+    assert!(out.contains("\"verdict\":\"DANGEROUS\"") && out.contains("Upgrade"));
+}
+
+#[test]
+fn stake_authorize_is_dangerous() {
+    let f = sim(Value::Null);
+    let (out, _) = handler::run(&json!({"transaction": tx_with(STAKE, 1)}).to_string(), &f);
+    assert!(out.contains("\"verdict\":\"DANGEROUS\"") && out.contains("Authorize"));
+}
+
+#[test]
+fn vote_withdraw_is_dangerous() {
+    let f = sim(Value::Null);
+    let (out, _) = handler::run(&json!({"transaction": tx_with(VOTE, 4)}).to_string(), &f);
+    assert!(out.contains("\"verdict\":\"DANGEROUS\"") && out.contains("Withdraw"));
+}
+
+#[test]
+fn spl_freeze_account_is_flagged() {
+    // Freezing a holder's token account (tag 10) is a High-severity control action.
+    let keys = [wallet(), some_key(), b58(TOKEN)];
+    let tx = STANDARD.encode(build(&keys, &[(2, vec![0, 1], vec![10u8])]));
+    let f = sim(Value::Null);
+    let (out, _) = handler::run(&json!({"transaction": tx}).to_string(), &f);
+    assert!(out.contains("\"verdict\":\"DANGEROUS\"") && out.contains("FreezeAccount"), "{out}");
+}
+
+#[test]
+fn spl_transfer_checked_is_not_a_false_delegate_approval() {
+    // Regression: tag 12 is TransferChecked (benign), NOT ApproveChecked. It must not
+    // be flagged as a High-severity delegate approval.
+    let keys = [wallet(), some_key(), b58(TOKEN)];
+    let mut data = vec![12u8];
+    data.extend(1000u64.to_le_bytes()); // amount
+    data.push(6); // decimals
+    let tx = STANDARD.encode(build(&keys, &[(2, vec![0, 1, 1], data)]));
+    let f = sim(Value::Null);
+    let (out, ok) = handler::run(&json!({"transaction": tx}).to_string(), &f);
+    assert!(ok, "{out}");
+    assert!(out.contains("TransferChecked"), "tag 12 must decode as TransferChecked: {out}");
+    assert!(!out.contains("ApproveChecked"), "tag 12 must NOT be mislabeled ApproveChecked");
+    assert!(out.contains("\"verdict\":\"SAFE\""), "a checked transfer is not dangerous: {out}");
 }
