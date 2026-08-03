@@ -11,7 +11,7 @@ fail-closed even though each can now read the chain.
 |--------|---------------|--------------|
 | [`solana-token-risk`](plugins/solana-token-risk) | **live · `http_client`** | **Assesses a mint**: reads it over `wasi:http` and returns deterministic rug/honeypot risk evidence — mint & freeze authority, Token-2022 dangerous extensions (transfer hook, permanent delegate, transfer fee, non-transferable, default-frozen), mutable metadata, and holder concentration that separates off-curve LP vaults from whale wallets. |
 | [`solana-wallet-risk`](plugins/solana-wallet-risk) | **live · `http_client`** | **Assesses a portfolio**: scans a wallet's SPL *and* Token-2022 holdings and reports which positions can be frozen, diluted, seized, blocked or taxed — with breadth-weighted wallet-level scoring. |
-| [`solana-tx-guard`](plugins/solana-tx-guard) | **live · `http_client`** | **Guards a transaction before it is signed**: statically decodes it and flags dangerous instructions (SetAuthority, delegate Approve, CloseAccount, owner Assign), then simulates it live against mainnet to show the real success/failure and effect. |
+| [`solana-tx-guard`](plugins/solana-tx-guard) | **live · `http_client`** | **Guards a transaction before it is signed**: statically decodes it and flags dangerous instructions (SetAuthority, delegate Approve, CloseAccount, owner Assign), then simulates it live against mainnet and computes the **real balance effect** — it reports exactly how many lamports the fee payer would lose and escalates to DANGEROUS on a genuine drain even when the static decode looks benign. |
 | [`solana-tx-builder`](plugins/solana-tx-builder) | **live · `http_client`** | **Constructs**: PDAs, associated token accounts, SystemProgram & SPL-Token transfer instructions. Its live `prepare_transfer` op reads a recent blockhash and checks the recipient exists on chain, so the transfer is **broadcast-ready and typo-safe** — the agent builds, a wallet signs; it never signs or sends. |
 | [`solana-verify`](plugins/solana-verify) | **live · `http_client`** | **Verifies**: keccak-256 Merkle proofs (the TxODDS on-chain settlement primitive), ed25519 signatures, base58 pubkeys. Its live `merkle_verify_onchain` op reads the anchored root **straight from chain**, so a proof is checked against real on-chain state — not a caller-supplied root. |
 
@@ -43,7 +43,7 @@ Mirrors [`zeroclaw-labs/zeroclaw-plugins`](https://github.com/zeroclaw-labs/zero
 
 ## Build & test
 
-**One command** — builds all five wasm components, runs all 300 tests, prints the
+**One command** — builds all five wasm components, runs all 303 tests, prints the
 http-import / tool-export proof per plugin:
 ```bash
 ./setup.sh            # or ./setup.sh --quick to skip the wasm builds and just run tests
@@ -60,15 +60,15 @@ Each build emits a WASM **component** exporting `zeroclaw:plugin/tool` — verif
 `wasm-tools component wit`. No `cargo-component` needed; the `wit_bindgen::generate!` macro
 handles it.
 
-### Composition — the four tools chained (real mainnet, one command)
+### Composition — the five tools chained (real mainnet, one command)
 ```bash
-./compose-demo.sh          # screen a wallet -> assess its riskiest mint -> build an unsigned exit -> verify
+./compose-demo.sh          # screen a wallet -> assess its riskiest mint -> build an unsigned exit -> guard it -> verify
 ```
 `solana-wallet-risk` screens a wallet and surfaces the riskiest holding;
 `solana-token-risk` deep-dives that exact mint; `solana-tx-builder` constructs the **unsigned** exit transfer;
 `solana-tx-guard` decodes and simulates it live before anyone signs; `solana-verify`
 is the deterministic trust anchor. Each tool's output feeds the next — the
-system-level story, not four isolated tools.
+system-level story, not five isolated tools.
 
 ### Running in the real ZeroClaw runtime
 These install into the shipping runtime's plugin system (`plugins_dir`,
@@ -83,7 +83,7 @@ cd plugins/solana-token-risk && ./demo.sh          # tests + live BONK vs USDC a
 ## Status
 - ✅ All five build to `wasm32-wasip2` components; exports verified with `wasm-tools`.
   All five import `wasi:http/outgoing-handler@0.2.4` (the read-only http grant).
-- ✅ Tests: `solana-verify` 91 · `solana-token-risk` 78 · `solana-tx-builder` 58 · `solana-wallet-risk` 47 · `solana-tx-guard` 26 — **300 total**,
+- ✅ Tests: `solana-verify` 91 · `solana-token-risk` 78 · `solana-tx-builder` 58 · `solana-wallet-risk` 47 · `solana-tx-guard` 29 — **303 total**,
   covering every risk flag and severity boundary, Merkle-fold conformance (known keccak/sha256
   vectors, forged/truncated/reordered proofs) plus reading the anchored root live from chain, real
   ed25519 signature verification and its failure modes, PDA/ATA derivation properties, exact

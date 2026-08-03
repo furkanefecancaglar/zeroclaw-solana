@@ -48,6 +48,11 @@ pub struct DecodedTx {
     pub version: &'static str, // "legacy" | "v0"
     pub num_required_signatures: u8,
     pub account_keys: Vec<String>,
+    /// The fee payer (account 0) — always a writable signer; "your" account.
+    pub fee_payer: String,
+    /// Statically-visible writable accounts (whose balance a signature can change),
+    /// in message order. v0 lookup-table accounts are resolved on-chain and excluded.
+    pub writable_accounts: Vec<String>,
     pub num_instructions: usize,
     pub findings: Vec<Finding>,
     /// Programs invoked that are not on the known-safe list.
@@ -106,8 +111,8 @@ pub fn decode_tx(raw: &[u8]) -> Result<DecodedTx, String> {
     }
 
     let num_required_signatures = *raw.get(pos).ok_or("truncated: header")?;
-    let _num_readonly_signed = *raw.get(pos + 1).ok_or("truncated: header")?;
-    let _num_readonly_unsigned = *raw.get(pos + 2).ok_or("truncated: header")?;
+    let num_readonly_signed = *raw.get(pos + 1).ok_or("truncated: header")?;
+    let num_readonly_unsigned = *raw.get(pos + 2).ok_or("truncated: header")?;
     pos += 3;
 
     // account keys
@@ -164,10 +169,31 @@ pub fn decode_tx(raw: &[u8]) -> Result<DecodedTx, String> {
         return Err("no account keys — not a decodable transaction".into());
     }
 
+    // Writable accounts by Solana's message layout: the writable signers are
+    // [0, R - readonly_signed), the writable non-signers are [R, len - readonly_unsigned).
+    let len = account_keys.len();
+    let r = num_required_signatures as usize;
+    let ros = num_readonly_signed as usize;
+    let rou = num_readonly_unsigned as usize;
+    let mut writable_accounts = Vec::new();
+    for (i, k) in account_keys.iter().enumerate() {
+        let writable = if i < r {
+            i < r.saturating_sub(ros)
+        } else {
+            i < len.saturating_sub(rou)
+        };
+        if writable {
+            writable_accounts.push(k.clone());
+        }
+    }
+    let fee_payer = account_keys[0].clone();
+
     Ok(DecodedTx {
         version,
         num_required_signatures,
         account_keys,
+        fee_payer,
+        writable_accounts,
         num_instructions,
         findings,
         unknown_programs: unknown,

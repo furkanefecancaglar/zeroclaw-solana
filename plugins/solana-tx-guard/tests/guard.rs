@@ -252,9 +252,29 @@ fn safe_transfer_tx_b64() -> String {
 }
 
 fn sim(err: Value) -> impl Fn(&str, &str, Value) -> Result<Value, String> {
-    move |_u: &str, method: &str, _p: Value| {
-        assert_eq!(method, "simulateTransaction");
-        Ok(json!({"result":{"value":{"err": err.clone(), "unitsConsumed": 150, "logs": ["Program 111 success"]}}}))
+    move |_u: &str, method: &str, _p: Value| match method {
+        // Balance-delta pre-fetch: not provided by this mock, so deltas are skipped and
+        // the static + simulation verdict stands (exactly the degraded path on a throttled RPC).
+        "getMultipleAccounts" => Err("not provided by this mock".to_string()),
+        "simulateTransaction" => Ok(json!({"result":{"value":{
+            "err": err.clone(), "unitsConsumed": 150, "logs": ["Program 111 success"]}}})),
+        other => panic!("unexpected RPC method {other}"),
+    }
+}
+
+/// A mock that provides pre-balances (getMultipleAccounts) and post-balances (in the
+/// simulateTransaction `accounts` field) so the guard can compute the real drain.
+fn sim_with_balances(
+    pre: Vec<u64>,
+    post: Vec<u64>,
+) -> impl Fn(&str, &str, Value) -> Result<Value, String> {
+    move |_u: &str, method: &str, _p: Value| match method {
+        "getMultipleAccounts" => Ok(json!({"result":{"value":
+            pre.iter().map(|l| json!({"lamports": l})).collect::<Vec<_>>()}})),
+        "simulateTransaction" => Ok(json!({"result":{"value":{
+            "err": Value::Null, "unitsConsumed": 200, "logs": ["ok"],
+            "accounts": post.iter().map(|l| json!({"lamports": l})).collect::<Vec<_>>()}}})),
+        other => panic!("unexpected RPC method {other}"),
     }
 }
 
@@ -274,6 +294,38 @@ fn guard_passes_a_plain_transfer() {
     let (out, ok) = handler::run(&json!({"transaction": safe_transfer_tx_b64()}).to_string(), &f);
     assert!(ok);
     assert!(out.contains("\"verdict\":\"SAFE\""));
+}
+
+#[test]
+fn a_big_simulated_drain_escalates_a_static_safe_to_dangerous() {
+    // Static decode: a plain transfer (SAFE). But the simulation shows the fee payer
+    // losing 0.2 SOL — the guard must flag that no static decoder can see.
+    let f = sim_with_balances(vec![1_000_000_000, 0, 0], vec![800_000_000, 200_000_000, 0]);
+    let (out, ok) = handler::run(&json!({"transaction": safe_transfer_tx_b64()}).to_string(), &f);
+    assert!(ok, "{out}");
+    assert!(out.contains("\"verdict\":\"DANGEROUS\""), "a 0.2 SOL drain must be DANGEROUS: {out}");
+    assert!(out.contains("drain_warning"));
+    assert!(out.contains("SENDS 0.200000 SOL"), "must quantify the outflow: {out}");
+    assert!(out.contains("\"is_fee_payer\":true"));
+}
+
+#[test]
+fn a_small_outflow_beyond_fees_escalates_to_review() {
+    // 0.01 SOL out — more than fees, less than a big drain: REVIEW, not DANGEROUS.
+    let f = sim_with_balances(vec![1_000_000_000, 0, 0], vec![990_000_000, 10_000_000, 0]);
+    let (out, ok) = handler::run(&json!({"transaction": safe_transfer_tx_b64()}).to_string(), &f);
+    assert!(ok, "{out}");
+    assert!(out.contains("\"verdict\":\"REVIEW\""), "{out}");
+    assert!(out.contains("beyond fees"));
+}
+
+#[test]
+fn fee_only_change_stays_safe() {
+    // Only signature fees leave the fee payer (5000 lamports) — no escalation.
+    let f = sim_with_balances(vec![1_000_000_000, 0, 0], vec![999_995_000, 1000, 0]);
+    let (out, ok) = handler::run(&json!({"transaction": safe_transfer_tx_b64()}).to_string(), &f);
+    assert!(ok, "{out}");
+    assert!(out.contains("\"verdict\":\"SAFE\""), "fee-only movement must stay SAFE: {out}");
 }
 
 #[test]
