@@ -16,30 +16,42 @@ shipping ZeroClaw runtime's plugin system. Verified against **ZeroClaw v0.8.3**
 | `plugins.security.signature_mode` | `disabled` | `disabled` / `permissive` / `strict` Ed25519 verification |
 | `plugins.limits` | fuel 1e9, 256 MB, 64 instances | per-call WASM sandbox limits |
 
-A plugin directory is exactly what this repo ships: `manifest.toml` + the
-`wasm32-wasip2` component.
+A plugin directory is exactly what each plugin here provides: its `manifest.toml`
+(which names the component via `wasm_path`) + the built `wasm32-wasip2` component.
+The `.wasm` is a build artifact — it is **not** committed; `./setup.sh` builds all
+five, or build one with the command below.
 
-## Install one of these plugins
+## Install all five plugins
 
 ```bash
-# 1. build the component
-cd plugins/solana-token-risk
-cargo build --locked --target wasm32-wasip2 --release
+# 1. build every component (or: cd plugins/<name> && cargo build --locked --target wasm32-wasip2 --release)
+./setup.sh
 
-# 2. drop it into the runtime's plugins dir
-mkdir -p ~/.zeroclaw/plugins/solana-token-risk
-cp manifest.toml solana_token_risk.wasm ~/.zeroclaw/plugins/solana-token-risk/
+# 2. drop each plugin (manifest + its component) into the runtime's plugins dir.
+#    The component lands in target/wasm32-wasip2/release/<name_with_underscores>.wasm;
+#    the manifest's wasm_path expects it next to manifest.toml in the install dir.
+for p in solana-token-risk solana-wallet-risk solana-tx-guard solana-tx-builder solana-verify; do
+  wasm="${p//-/_}.wasm"
+  mkdir -p ~/.zeroclaw/plugins/"$p"
+  cp "plugins/$p/manifest.toml" ~/.zeroclaw/plugins/"$p"/
+  cp "plugins/$p/target/wasm32-wasip2/release/$wasm" ~/.zeroclaw/plugins/"$p"/
+done
 
 # 3. enable the plugin system
 zeroclaw config set plugins.enabled true
 zeroclaw config set plugins.auto_discover true
 ```
 
-Verified: with the plugin in place the runtime boots cleanly (config validates,
-memory initializes, security posture resolves) and `wasm-tools validate` confirms
-the component is well-formed for the wasmtime host — the same host the runtime
-embeds. `signature_mode` defaults to `disabled`, so an unsigned local plugin loads;
-for registry distribution the upstream `publish.yml` signs at publish time.
+To install just one, run the two `cp` lines for that single `p`.
+
+Verified: with a plugin of this exact shape in place the runtime boots cleanly
+(config validates, memory initializes, security posture resolves) against ZeroClaw
+v0.8.3, and `wasm-tools validate` confirms **all five** components are well-formed
+for the wasmtime host — the same host the runtime embeds. Because every plugin here
+ships the identical shape (a `manifest.toml` + a validated `wasm32-wasip2` component
+exporting `zeroclaw:plugin/tool`), the install steps above apply to each unchanged.
+`signature_mode` defaults to `disabled`, so an unsigned local plugin loads; for
+registry distribution the upstream `publish.yml` signs at publish time.
 
 ## Invoking the tool
 

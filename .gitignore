@@ -1,2 +1,5 @@
 target/
 **/target/
+
+# built components are artifacts — build with ./setup.sh, never commit
+plugins/*/*.wasm
