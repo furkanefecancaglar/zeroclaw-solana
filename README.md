@@ -1,31 +1,30 @@
 # zeroclaw-solana — Solana-native plugins for ZeroClaw 🦞
 
 Five WebAssembly **tool plugins** that give a [ZeroClaw](https://github.com/zeroclaw-labs/zeroclaw)
-agent Solana capabilities — all **live-capable** and all **key-free**. Three read the chain over
-`wasi:http`; two are deliberately **local · zero network surface**, the trust anchors that need no
-grant. Together they let an agent **screen** a portfolio, **assess** a token's risk, **build** a
-transaction, **guard** it against mainnet, and **verify** on-chain data from natural language —
-without ever holding a private key.
+agent Solana capabilities — all **live over `wasi:http`** and all **key-free**. Together they let an
+agent **screen** a portfolio, **assess** a token's risk, **build** a transaction, **guard** it
+against mainnet, and **verify** on-chain data from natural language — without ever holding a private
+key. Every plugin also keeps a pure-compute path, so the deterministic core stays testable and
+fail-closed even though each can now read the chain.
 
 | Plugin | Network model | What it does |
 |--------|---------------|--------------|
 | [`solana-token-risk`](plugins/solana-token-risk) | **live · `http_client`** | **Assesses a mint**: reads it over `wasi:http` and returns deterministic rug/honeypot risk evidence — mint & freeze authority, Token-2022 dangerous extensions (transfer hook, permanent delegate, transfer fee, non-transferable, default-frozen), mutable metadata, and holder concentration that separates off-curve LP vaults from whale wallets. |
 | [`solana-wallet-risk`](plugins/solana-wallet-risk) | **live · `http_client`** | **Assesses a portfolio**: scans a wallet's SPL *and* Token-2022 holdings and reports which positions can be frozen, diluted, seized, blocked or taxed — with breadth-weighted wallet-level scoring. |
 | [`solana-tx-guard`](plugins/solana-tx-guard) | **live · `http_client`** | **Guards a transaction before it is signed**: statically decodes it and flags dangerous instructions (SetAuthority, delegate Approve, CloseAccount, owner Assign), then simulates it live against mainnet to show the real success/failure and effect. |
-| [`solana-tx-builder`](plugins/solana-tx-builder) | **local · zero network surface** | **Constructs**: PDAs, associated token accounts, SystemProgram & SPL-Token transfer instructions — the agent builds, a wallet signs. Pure compute so it takes **no trust grant**. |
-| [`solana-verify`](plugins/solana-verify) | **local · zero network surface** | **Verifies**: keccak-256 Merkle proofs (the TxODDS on-chain settlement primitive), ed25519 signatures, base58 pubkeys. Deterministic, so it is the **trust anchor** the others feed into. |
+| [`solana-tx-builder`](plugins/solana-tx-builder) | **live · `http_client`** | **Constructs**: PDAs, associated token accounts, SystemProgram & SPL-Token transfer instructions. Its live `prepare_transfer` op reads a recent blockhash and checks the recipient exists on chain, so the transfer is **broadcast-ready and typo-safe** — the agent builds, a wallet signs; it never signs or sends. |
+| [`solana-verify`](plugins/solana-verify) | **live · `http_client`** | **Verifies**: keccak-256 Merkle proofs (the TxODDS on-chain settlement primitive), ed25519 signatures, base58 pubkeys. Its live `merkle_verify_onchain` op reads the anchored root **straight from chain**, so a proof is checked against real on-chain state — not a caller-supplied root. |
 
-## The network model (deliberate by trust surface)
+## The network model (live, but least-privilege)
 ZeroClaw tool plugins get outbound HTTP **only when they declare the `http_client` permission** —
 the host links `wasi:http` after validating that grant (see the tool-plugin guide, *"Tools that
-call the network"*). Every plugin here is live-capable; the split is deliberate, minimising trust
-surface rather than maximising permissions:
-- **`solana-token-risk`**, **`solana-wallet-risk`** and **`solana-tx-guard`** genuinely need the chain, so they declare
-  `http_client` and read live over `wasi:http` (via `waki`). Read-only: they fetch account state,
-  never send a transaction.
-- **`solana-tx-builder` / `solana-verify`** stay pure compute (`permissions = []`) **on purpose** —
-  building an instruction or folding a proof needs no network, so demanding a grant would be pure
-  attack surface for zero benefit. They are the fail-closed trust anchors the live scanners feed into.
+call the network"*). All five declare `http_client` and read the chain **read-only** (via `waki`):
+they fetch account state, a recent blockhash, or an anchored root — they **never send a
+transaction** and **never hold a key**. The RPC fetch is injected as a parameter into a pure
+handler, so the deterministic core (`cargo test`, ~300 cases) runs entirely on the host with mock
+RPC, and the exact same code path executes live in the wasm component. Each plugin also keeps its
+pure-compute ops (Merkle folds, instruction encoding) that need no network at all — so the tools are
+live where the chain adds trust, and fail-closed everywhere else.
 
 An agent can therefore *screen a wallet, check a token is safe, build the transfer, guard it against the chain, and verify the result* — with the network grant confined to the two read-only scanners and **none holding a key**.
 
@@ -45,7 +44,7 @@ Mirrors [`zeroclaw-labs/zeroclaw-plugins`](https://github.com/zeroclaw-labs/zero
 ## Build & test (each plugin is standalone)
 ```bash
 rustup target add wasm32-wasip2
-for p in solana-token-risk solana-wallet-risk solana-tx-builder solana-verify; do
+for p in solana-token-risk solana-wallet-risk solana-tx-guard solana-tx-builder solana-verify; do
   ( cd plugins/$p && cargo build --target wasm32-wasip2 --release && cargo test --release )
 done
 ```
@@ -75,11 +74,12 @@ cd plugins/solana-token-risk && ./demo.sh          # tests + live BONK vs USDC a
 
 ## Status
 - ✅ All five build to `wasm32-wasip2` components; exports verified with `wasm-tools`.
-  The three live plugins additionally import `wasi:http/outgoing-handler@0.2.4` (the http grant).
-- ✅ Tests: `solana-verify` 88 · `solana-token-risk` 78 · `solana-tx-builder` 56 · `solana-wallet-risk` 47 · `solana-tx-guard` 26 — **295 total**,
+  All five import `wasi:http/outgoing-handler@0.2.4` (the read-only http grant).
+- ✅ Tests: `solana-verify` 91 · `solana-token-risk` 78 · `solana-tx-builder` 58 · `solana-wallet-risk` 47 · `solana-tx-guard` 26 — **300 total**,
   covering every risk flag and severity boundary, Merkle-fold conformance (known keccak/sha256
-  vectors, forged/truncated/reordered proofs), real ed25519 signature verification and its failure
-  modes, PDA/ATA derivation properties, exact instruction byte layouts, malformed-input handling,
-  and a prompt-injection fail-closed test per plugin.
-- ✅ Key-free by construction: **no plugin ever takes a private key**; only the three read-only scanners
-  take a (read-only) network grant.
+  vectors, forged/truncated/reordered proofs) plus reading the anchored root live from chain, real
+  ed25519 signature verification and its failure modes, PDA/ATA derivation properties, exact
+  instruction byte layouts, a live blockhash + recipient-existence check, malformed-input handling,
+  and a prompt-injection fail-closed test per plugin (including the live ops).
+- ✅ Key-free by construction: **no plugin ever takes a private key**; every network grant is
+  strictly read-only (account state, blockhash, anchored root) — no plugin can sign or send.

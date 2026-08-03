@@ -19,6 +19,12 @@ sha2 = "0.10"
 bs58 = "0.5"
 hex = "0.4"
 
+# wasi:http client — compiled ONLY into the wasm component, never on the host, so
+# `cargo test` (host) never pulls it. Recommended by the tool-plugin guide. Used only by
+# the live `prepare_transfer` op (recent blockhash + recipient existence check).
+[target.'cfg(target_family = "wasm")'.dependencies]
+waki = { version = "0.5.1", features = ["json"] }
+
 [profile.release]
 opt-level = "s"
 lto = true
