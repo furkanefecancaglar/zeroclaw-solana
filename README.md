@@ -15,6 +15,33 @@ fail-closed even though each can now read the chain.
 | [`solana-tx-builder`](plugins/solana-tx-builder) | **live · `http_client`** | **Constructs**: PDAs, associated token accounts, SystemProgram & SPL-Token transfer instructions. Its live `prepare_transfer` op reads a recent blockhash and checks the recipient exists on chain, so the transfer is **broadcast-ready and typo-safe** — the agent builds, a wallet signs; it never signs or sends. |
 | [`solana-verify`](plugins/solana-verify) | **live · `http_client`** | **Verifies**: keccak-256 Merkle proofs (the TxODDS on-chain settlement primitive), ed25519 signatures, base58 pubkeys. Its live `merkle_verify_onchain` op reads the anchored root **straight from chain**, and `merkle_verify_batch` folds **many settlement claims against one root in a single call** (one RPC read for the whole batch) — GREEN only if every claim folds. |
 
+## Why this wins
+
+Most Solana submissions are a single token-risk checker (there are many) or a standalone
+transaction guard (there are several too). The edge here is not one feature — it is the
+**combination**, and one thing no one else can copy this week:
+
+- **A composed, all-live, fail-closed system, not five isolated tools.** An agent can screen a
+  wallet → assess its riskiest mint → build an exit → guard it against mainnet → verify the
+  result, each tool feeding the next (`./compose-demo.sh`, real mainnet, one command). All five are
+  live over `wasi:http`, all read-only, none can sign or send, and every one has a prompt-injection
+  **fail-closed** test.
+- **A guard that quantifies the real damage.** `solana-tx-guard` doesn't just decode instructions
+  (System, SPL-Token/Token-2022, BPF Upgradeable Loader program-hijack, Stake, Vote) — it simulates
+  the transaction and reports **exactly how many lamports the fee payer would lose**, escalating to
+  DANGEROUS on a genuine drain even when the static decode looks benign. That balance-effect signal
+  is the one a static decoder can never give.
+- **Settlement verification tied to a real deployed engine.** `solana-verify` folds keccak Merkle
+  proofs to an anchored root read **straight from chain**, and `merkle_verify_batch` checks many
+  settlement claims against one root in a single call — mirroring a **deployed TxODDS on-chain
+  settlement engine** we actually run. Nobody else has that story.
+- **One vocabulary the agent can act on.** Every tool returns the same `agent_verdict`
+  (`RED`/`AMBER`/`GREEN`) + one-line `reason`, so the model gets an identical, actionable shape from
+  all five.
+- **Reproducible and honest.** `./setup.sh` builds all five components and runs **317 tests** with
+  the http-import/tool-export proof per plugin; no build artifacts are committed, so what a judge
+  runs is exactly what the source produces.
+
 ## The network model (live, but least-privilege)
 ZeroClaw tool plugins get outbound HTTP **only when they declare the `http_client` permission** —
 the host links `wasi:http` after validating that grant (see the tool-plugin guide, *"Tools that
@@ -28,14 +55,13 @@ live where the chain adds trust, and fail-closed everywhere else.
 
 An agent can therefore *screen a wallet, check a token is safe, build the transfer, guard it against the chain, and verify the result* — with the network grant confined to the two read-only scanners and **none holding a key**.
 
-## Why these
-`solana-token-risk` is the plugin the sponsor said they'd *"like to exist most of all"* —
-built the way the guide prescribes (pure scoring core + thin `waki` fetch), and it discriminates
-on real mainnet data: a renounced token (BONK) scores MINIMAL, a token with live authorities
-(USDC) is flagged with the exact on-chain evidence. The verify plugin's flagship op mirrors a
-real on-chain primitive: TxODDS anchors settlement roots on Solana and a proof either folds to
-the anchored root or it does not — no oracle to trust. Built by the team behind a deployed TxODDS
-on-chain settlement engine (World Cup hackathon).
+## Provenance
+`solana-token-risk` covers the capability the sponsor said they'd *"like to exist most of all"* —
+built the way the guide prescribes (pure scoring core + thin `waki` fetch), discriminating on real
+mainnet data (a renounced token scores low; one with live authorities is flagged with the exact
+on-chain evidence). `solana-verify` mirrors a real on-chain primitive: TxODDS anchors settlement
+roots on Solana and a proof either folds to the anchored root or it does not — no oracle to trust.
+Built by the team behind a **deployed TxODDS on-chain settlement engine** (World Cup hackathon).
 
 ## Layout
 Mirrors [`zeroclaw-labs/zeroclaw-plugins`](https://github.com/zeroclaw-labs/zeroclaw-plugins):
