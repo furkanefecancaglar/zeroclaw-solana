@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Composition demo: the four plugins chained the way a ZeroClaw agent would use
+# Composition demo: the five plugins chained the way a ZeroClaw agent would use
 # them, on REAL mainnet data. This is the system-level story — each tool's output
 # feeds the next:
 #
@@ -9,7 +9,7 @@
 #   solana-tx-guard    →  decode + simulate the built tx before it is signed
 #   solana-verify      →  the no-custody settlement primitive the flow rests on
 #
-# Nothing is mocked and nothing is signed. One network grant, no keys.
+# Nothing is mocked and nothing is signed. Read-only grants, no keys.
 set -euo pipefail
 trap '' PIPE
 cd "$(dirname "$0")"
@@ -146,5 +146,5 @@ echo "  or checks an ed25519 signature deterministically — the trust anchor."
 
 echo
 echo "════════════════════════════════════════════════════════════════"
-echo " Chained: screen → assess → build → GUARD → verify. One network grant, zero keys."
+echo " Chained: screen → assess → build → GUARD → verify. Read-only, zero keys."
 echo "════════════════════════════════════════════════════════════════"
