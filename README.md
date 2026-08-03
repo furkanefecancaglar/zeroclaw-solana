@@ -41,7 +41,15 @@ on-chain settlement engine (World Cup hackathon).
 Mirrors [`zeroclaw-labs/zeroclaw-plugins`](https://github.com/zeroclaw-labs/zeroclaw-plugins):
 `wit/v0/*.wit` + `plugins/<name>/` (pure Rust core + `wit-bindgen` shim + `manifest.toml`).
 
-## Build & test (each plugin is standalone)
+## Build & test
+
+**One command** — builds all five wasm components, runs all 300 tests, prints the
+http-import / tool-export proof per plugin:
+```bash
+./setup.sh            # or ./setup.sh --quick to skip the wasm builds and just run tests
+```
+
+Or drive each plugin standalone:
 ```bash
 rustup target add wasm32-wasip2
 for p in solana-token-risk solana-wallet-risk solana-tx-guard solana-tx-builder solana-verify; do
