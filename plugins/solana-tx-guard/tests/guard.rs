@@ -285,6 +285,7 @@ fn guard_flags_a_dangerous_transaction() {
     let (out, ok) = handler::run(&json!({"transaction": set_authority_tx_b64()}).to_string(), &f);
     assert!(ok);
     assert!(out.contains("\"verdict\":\"DANGEROUS\""));
+    assert!(out.contains("\"agent_verdict\":\"RED\""), "DANGEROUS maps to RED: {out}");
     assert!(out.contains("SetAuthority"));
     assert!(out.contains("\"units_consumed\":150"));
 }
@@ -295,6 +296,7 @@ fn guard_passes_a_plain_transfer() {
     let (out, ok) = handler::run(&json!({"transaction": safe_transfer_tx_b64()}).to_string(), &f);
     assert!(ok);
     assert!(out.contains("\"verdict\":\"SAFE\""));
+    assert!(out.contains("\"agent_verdict\":\"GREEN\""), "SAFE maps to GREEN: {out}");
 }
 
 #[test]

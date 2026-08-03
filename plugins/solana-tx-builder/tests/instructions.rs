@@ -267,3 +267,11 @@ fn prompt_injection_cannot_make_the_plugin_sign_or_send() {
     let lower = out.to_lowercase();
     assert!(!lower.contains("signature") && !lower.contains("submitted"));
 }
+
+#[test]
+fn output_carries_a_standard_agent_verdict() {
+    let (out, ok) = run(&json!({"op":"system_transfer","from":ALICE,"to":USDC,"lamports":1000}).to_string());
+    assert!(ok);
+    assert!(out.contains("\"agent_verdict\":\"GREEN\""), "builder ops are GREEN: {out}");
+    assert!(out.contains("\"reason\":"));
+}

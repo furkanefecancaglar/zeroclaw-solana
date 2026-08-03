@@ -83,6 +83,8 @@ pub mod handler {
         let valid = merkle_verify(leaf, &proof, root);
         (json!({
             "ok": true, "op": "merkle_verify", "valid": valid,
+            "agent_verdict": if valid { "GREEN" } else { "RED" },
+            "reason": if valid { "proof folds to the supplied root" } else { "proof does NOT fold to the supplied root — rejected" },
             "hash": "keccak256", "depth": proof.len(),
             "root": to_hex(&root),
         }).to_string(), true)
@@ -149,6 +151,8 @@ pub mod handler {
         let valid = merkle_verify(leaf, &proof, root);
         (json!({
             "ok": true, "op": "merkle_verify_onchain", "valid": valid,
+            "agent_verdict": if valid { "GREEN" } else { "RED" },
+            "reason": if valid { "proof folds to the on-chain anchored root" } else { "proof does NOT fold to the on-chain root — rejected" },
             "hash": "keccak256", "depth": proof.len(),
             "account": account, "offset": offset, "slot": slot,
             "root": to_hex(&root), "source": "on-chain",
@@ -165,6 +169,8 @@ pub mod handler {
         };
         let valid = ed25519_verify(&pk, &msg, &sig);
         (json!({ "ok": true, "op": "ed25519_verify", "valid": valid,
+                 "agent_verdict": if valid { "GREEN" } else { "RED" },
+                 "reason": if valid { "signature is valid for this pubkey and message" } else { "signature is INVALID — rejected" },
                  "pubkey": b58_encode(&pk) }).to_string(), true)
     }
 
@@ -239,6 +245,7 @@ pub mod handler {
             let (out, ok) = run(&args, &unreachable_fetch);
             assert!(ok);
             assert!(out.contains("\"valid\":true"));
+            assert!(out.contains("\"agent_verdict\":\"GREEN\""), "a valid proof is GREEN: {out}");
 
             let forged = to_hex(&keccak256(b"evil"));
             let args2 = json!({"op":"merkle_verify","leaf":forged,"root":root,

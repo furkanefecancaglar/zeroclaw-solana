@@ -43,7 +43,7 @@ Mirrors [`zeroclaw-labs/zeroclaw-plugins`](https://github.com/zeroclaw-labs/zero
 
 ## Build & test
 
-**One command** — builds all five wasm components, runs all 309 tests, prints the
+**One command** — builds all five wasm components, runs all 312 tests, prints the
 http-import / tool-export proof per plugin:
 ```bash
 ./setup.sh            # or ./setup.sh --quick to skip the wasm builds and just run tests
@@ -83,7 +83,7 @@ cd plugins/solana-token-risk && ./demo.sh          # tests + live BONK vs USDC a
 ## Status
 - ✅ All five build to `wasm32-wasip2` components; exports verified with `wasm-tools`.
   All five import `wasi:http/outgoing-handler@0.2.4` (the read-only http grant).
-- ✅ Tests: `solana-verify` 91 · `solana-token-risk` 78 · `solana-tx-builder` 58 · `solana-wallet-risk` 47 · `solana-tx-guard` 35 — **309 total**,
+- ✅ Tests: `solana-verify` 91 · `solana-token-risk` 79 · `solana-tx-builder` 59 · `solana-wallet-risk` 48 · `solana-tx-guard` 35 — **312 total**,
   covering every risk flag and severity boundary, Merkle-fold conformance (known keccak/sha256
   vectors, forged/truncated/reordered proofs) plus reading the anchored root live from chain, real
   ed25519 signature verification and its failure modes, PDA/ATA derivation properties, exact
@@ -91,3 +91,6 @@ cd plugins/solana-token-risk && ./demo.sh          # tests + live BONK vs USDC a
   and a prompt-injection fail-closed test per plugin (including the live ops).
 - ✅ Key-free by construction: **no plugin ever takes a private key**; every network grant is
   strictly read-only (account state, blockhash, anchored root) — no plugin can sign or send.
+- ✅ **One verdict vocabulary across all five**: every tool returns a top-level
+  `agent_verdict` of `RED` (act / do not proceed), `AMBER` (review first) or `GREEN`, plus a
+  one-line `reason` — so an agent gets the same actionable shape from every plugin.

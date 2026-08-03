@@ -127,6 +127,7 @@ pub mod handler {
         let refs: Vec<&[u8]> = owned.iter().map(|b| b.as_slice()).collect();
         let (addr, bump) = find_program_address(&refs, &program);
         (json!({ "ok": true, "op": "derive_pda",
+                 "agent_verdict": "GREEN", "reason": "derived a program address (pure computation, no wallet action)",
                  "address": bs58::encode(addr).into_string(), "bump": bump }).to_string(), true)
     }
 
@@ -137,6 +138,7 @@ pub mod handler {
         let ata_prog = b58(ASSOCIATED_TOKEN_PROGRAM).unwrap();
         let (ata, bump) = associated_token_address(&owner, &mint, &tok, &ata_prog);
         (json!({ "ok": true, "op": "derive_ata",
+                 "agent_verdict": "GREEN", "reason": "derived an associated token account address (pure computation, no wallet action)",
                  "address": bs58::encode(ata).into_string(), "bump": bump,
                  "token_program": TOKEN_PROGRAM }).to_string(), true)
     }
@@ -146,7 +148,9 @@ pub mod handler {
         let to = match pk(v, "to") { Ok(x) => x, Err(e) => return (err(&e), false) };
         let lamports = match u64f(v, "lamports") { Ok(x) => x, Err(e) => return (err(&e), false) };
         let ix = system_transfer_ix(from, to, lamports, b58(SYSTEM_PROGRAM).unwrap());
-        (json!({ "ok": true, "op": "system_transfer", "instruction": ix_json(&ix) }).to_string(), true)
+        (json!({ "ok": true, "op": "system_transfer",
+                 "agent_verdict": "GREEN", "reason": "built a SOL-transfer instruction for a wallet to approve; nothing here can move funds",
+                 "instruction": ix_json(&ix) }).to_string(), true)
     }
 
     fn spl_transfer(v: &Value) -> (String, bool) {
@@ -155,7 +159,9 @@ pub mod handler {
         let authority = match pk(v, "authority") { Ok(x) => x, Err(e) => return (err(&e), false) };
         let amount = match u64f(v, "amount") { Ok(x) => x, Err(e) => return (err(&e), false) };
         let ix = spl_transfer_ix(source, dest, authority, amount, b58(TOKEN_PROGRAM).unwrap());
-        (json!({ "ok": true, "op": "spl_transfer", "instruction": ix_json(&ix) }).to_string(), true)
+        (json!({ "ok": true, "op": "spl_transfer",
+                 "agent_verdict": "GREEN", "reason": "built an SPL-token transfer instruction for a wallet to approve",
+                 "instruction": ix_json(&ix) }).to_string(), true)
     }
 
     /// Live variant of `system_transfer`: builds the same unsigned SOL-transfer instruction,
@@ -193,8 +199,13 @@ pub mod handler {
             Err(_) => (None, None), // couldn't check — report unknown rather than fabricate
         };
 
+        let (verdict, reason) = match recipient_exists {
+            Some(false) => ("AMBER", "built the transfer, BUT the recipient does not exist on chain — verify the address before approving"),
+            _ => ("GREEN", "built a broadcast-ready transfer with a recent blockhash for a wallet to approve"),
+        };
         (json!({
             "ok": true, "op": "prepare_transfer",
+            "agent_verdict": verdict, "reason": reason,
             "instruction": ix_json(&ix),
             "recent_blockhash": blockhash,
             "last_valid_block_height": last_valid,

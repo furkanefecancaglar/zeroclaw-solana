@@ -234,6 +234,9 @@ pub mod handler {
             "op": "guard",
             "rpc": rpc,
             "verdict": band,
+            // Standard cross-plugin verdict so an agent gets the same shape from every tool.
+            "agent_verdict": match band.as_str() { "DANGEROUS" => "RED", "REVIEW" => "AMBER", _ => "GREEN" },
+            "reason": summary.clone(),
             "static_risk_score": score,
             "version": d.version,
             "num_required_signatures": d.num_required_signatures,
