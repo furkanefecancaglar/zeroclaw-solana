@@ -131,18 +131,42 @@ echo "$SIM" > "$TMP/exit.sim.json"
   | python3 -c "
 import sys,json
 d=json.load(sys.stdin)
-print('  verdict:',d['verdict'],'|',d['summary'])
+print('  verdict:',d['verdict'],'('+d.get('agent_verdict','?')+') |',d['summary'])
 sim=d.get('simulation') or {}
 print('  live sim err:',json.dumps(sim.get('err')),'| units:',sim.get('units_consumed'))
 "
 
 echo
-echo "── STEP 5/5 · solana-verify: the no-custody settlement primitive ─"
-echo "  every step above is verifiable offline; verify folds a keccak Merkle proof"
-echo "  or checks an ed25519 signature deterministically — the trust anchor."
+echo "  ── the guard's edge: it quantifies the DRAIN a static decode can't see ──"
+echo "  (constructed drainer scenario — balances illustrative, the verdict math is the real handler)"
+# A tx that decodes as an ordinary transfer, but whose SIMULATION shows the fee payer
+# losing 0.5 SOL. Pre-balances (getMultipleAccounts) + post-balances (sim `accounts`).
+cat > "$TMP/drain.pre.json"  <<JSON
+{"result":{"value":[{"lamports":1000000000},{"lamports":2039280}]}}
+JSON
+cat > "$TMP/drain.sim.json" <<JSON
+{"result":{"value":{"err":null,"unitsConsumed":150,"logs":["Program 111 success"],"accounts":[{"lamports":500000000},{"lamports":502039280}]}}}
+JSON
+( cd plugins/solana-tx-guard && cargo run --release --quiet --example guard_file -- "$TXB64" "$TMP/drain.sim.json" "$TMP/drain.pre.json" 2>/dev/null ) \
+  | python3 -c "
+import sys,json
+d=json.load(sys.stdin)
+print('  verdict:',d['verdict'],'('+d.get('agent_verdict','?')+')')
+print('  drain_warning:',d.get('drain_warning'))
+"
+
+echo
+echo "── STEP 5/5 · solana-verify: settlement verification (the trust anchor) ─"
+echo "  a batch of settlement claims, folded against ONE anchored keccak-256 root"
+echo "  in a single call — GREEN only if every claim folds. Real keccak vectors:"
+echo "    leaf_a = keccak256(\"leaf-a\"), leaf_b = keccak256(\"leaf-b\"),"
+echo "    root   = keccak256(leaf_a || leaf_b)   (verify with any keccak tool)"
+LA=d17a9610bb4352407493d93613d49e9ed5bdcd85798adba639807f296d8dfc73
+LB=87fd4883cdd638e9285bd8a457aedd2f5c18105715760dc02c5f571d7c593069
+RT=eddb910f0e4b35c9e52d6fd15bf6d69842a9ae10363bb428e0e1dc8f05f2fa69
 ( cd plugins/solana-verify && cargo run --release --quiet --example run -- \
-  "{\"op\":\"pubkey_decode\",\"pubkey\":\"$WALLET\"}" 2>/dev/null ) \
-  | python3 -c "import sys,json;d=json.load(sys.stdin);print('  decoded owner pubkey ok:', d['bytes_hex'][:16]+'…')"
+  "{\"op\":\"merkle_verify_batch\",\"root\":\"$RT\",\"items\":[{\"leaf\":\"$LA\",\"proof\":[{\"hash\":\"$LB\",\"right\":true}]},{\"leaf\":\"$LB\",\"proof\":[{\"hash\":\"$LA\",\"right\":false}]}]}" 2>/dev/null ) \
+  | python3 -c "import sys,json;d=json.load(sys.stdin);print('  batch:',d['agent_verdict'],'|',d['valid_count'],'/',d['count'],'claims fold |',d['reason'])"
 
 echo
 echo "════════════════════════════════════════════════════════════════"
