@@ -3,7 +3,7 @@ name = "solana-verify"
 version = "0.1.0"
 edition = "2021"
 license = "MIT OR Apache-2.0"
-description = "ZeroClaw WIT plugin: offline Solana verification — keccak Merkle proofs, ed25519 signatures, base58 pubkeys. Pure compute, no network."
+description = "ZeroClaw WIT plugin: local, pure-compute Solana verification — keccak Merkle proofs, ed25519 signatures, base58 pubkeys. Deterministic trust anchor, zero network surface."
 publish = false
 
 # cdylib for the wasm component; rlib so the pure verify core is testable on the

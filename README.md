@@ -1,27 +1,31 @@
 # zeroclaw-solana — Solana-native plugins for ZeroClaw 🦞
 
 Five WebAssembly **tool plugins** that give a [ZeroClaw](https://github.com/zeroclaw-labs/zeroclaw)
-agent Solana capabilities — three live, two offline, all **key-free**. Together they let an agent
-**screen** a portfolio, **assess** a token's risk, **build** a transaction, and **verify** on-chain
-data from natural language, without ever holding a private key.
+agent Solana capabilities — all **live-capable** and all **key-free**. Three read the chain over
+`wasi:http`; two are deliberately **local · zero network surface**, the trust anchors that need no
+grant. Together they let an agent **screen** a portfolio, **assess** a token's risk, **build** a
+transaction, **guard** it against mainnet, and **verify** on-chain data from natural language —
+without ever holding a private key.
 
-| Plugin | Live? | What it does |
-|--------|-------|--------------|
-| [`solana-token-risk`](plugins/solana-token-risk) | **live (`http_client`)** | **Assesses a mint**: reads it over `wasi:http` and returns deterministic rug/honeypot risk evidence — mint & freeze authority, Token-2022 dangerous extensions (transfer hook, permanent delegate, transfer fee, non-transferable, default-frozen), mutable metadata, and holder concentration that separates off-curve LP vaults from whale wallets. |
-| [`solana-wallet-risk`](plugins/solana-wallet-risk) | **live (`http_client`)** | **Assesses a portfolio**: scans a wallet's SPL *and* Token-2022 holdings and reports which positions can be frozen, diluted, seized, blocked or taxed — with breadth-weighted wallet-level scoring. |
-| [`solana-tx-guard`](plugins/solana-tx-guard) | **live (`http_client`)** | **Guards a transaction before it is signed**: statically decodes it and flags dangerous instructions (SetAuthority, delegate Approve, CloseAccount, owner Assign), then simulates it live against mainnet to show the real success/failure and effect. |
-| [`solana-tx-builder`](plugins/solana-tx-builder) | offline | **Constructs**: PDAs, associated token accounts, SystemProgram & SPL-Token transfer instructions — the agent builds, a wallet signs. |
-| [`solana-verify`](plugins/solana-verify) | offline | **Verifies**: keccak-256 Merkle proofs (the TxODDS on-chain settlement primitive), ed25519 signatures, base58 pubkeys. |
+| Plugin | Network model | What it does |
+|--------|---------------|--------------|
+| [`solana-token-risk`](plugins/solana-token-risk) | **live · `http_client`** | **Assesses a mint**: reads it over `wasi:http` and returns deterministic rug/honeypot risk evidence — mint & freeze authority, Token-2022 dangerous extensions (transfer hook, permanent delegate, transfer fee, non-transferable, default-frozen), mutable metadata, and holder concentration that separates off-curve LP vaults from whale wallets. |
+| [`solana-wallet-risk`](plugins/solana-wallet-risk) | **live · `http_client`** | **Assesses a portfolio**: scans a wallet's SPL *and* Token-2022 holdings and reports which positions can be frozen, diluted, seized, blocked or taxed — with breadth-weighted wallet-level scoring. |
+| [`solana-tx-guard`](plugins/solana-tx-guard) | **live · `http_client`** | **Guards a transaction before it is signed**: statically decodes it and flags dangerous instructions (SetAuthority, delegate Approve, CloseAccount, owner Assign), then simulates it live against mainnet to show the real success/failure and effect. |
+| [`solana-tx-builder`](plugins/solana-tx-builder) | **local · zero network surface** | **Constructs**: PDAs, associated token accounts, SystemProgram & SPL-Token transfer instructions — the agent builds, a wallet signs. Pure compute so it takes **no trust grant**. |
+| [`solana-verify`](plugins/solana-verify) | **local · zero network surface** | **Verifies**: keccak-256 Merkle proofs (the TxODDS on-chain settlement primitive), ed25519 signatures, base58 pubkeys. Deterministic, so it is the **trust anchor** the others feed into. |
 
-## The network model (why two are live and two aren't)
+## The network model (deliberate by trust surface)
 ZeroClaw tool plugins get outbound HTTP **only when they declare the `http_client` permission** —
 the host links `wasi:http` after validating that grant (see the tool-plugin guide, *"Tools that
-call the network"*). So the split is deliberate, by trust surface:
+call the network"*). Every plugin here is live-capable; the split is deliberate, minimising trust
+surface rather than maximising permissions:
 - **`solana-token-risk`**, **`solana-wallet-risk`** and **`solana-tx-guard`** genuinely need the chain, so they declare
   `http_client` and read live over `wasi:http` (via `waki`). Read-only: they fetch account state,
   never send a transaction.
-- **`solana-tx-builder` / `solana-verify`** are pure compute (`permissions = []`) — they need no
-  network to build an instruction or fold a proof, so they take zero trust surface.
+- **`solana-tx-builder` / `solana-verify`** stay pure compute (`permissions = []`) **on purpose** —
+  building an instruction or folding a proof needs no network, so demanding a grant would be pure
+  attack surface for zero benefit. They are the fail-closed trust anchors the live scanners feed into.
 
 An agent can therefore *screen a wallet, check a token is safe, build the transfer, guard it against the chain, and verify the result* — with the network grant confined to the two read-only scanners and **none holding a key**.
 

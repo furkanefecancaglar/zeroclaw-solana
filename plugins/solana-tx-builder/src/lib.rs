@@ -1,6 +1,6 @@
 //! A ZeroClaw WIT tool plugin: `solana-tx-builder`.
 //!
-//! The companion to `solana-verify`. Offline, pure-compute construction of Solana
+//! The companion to `solana-verify`. Local, pure-compute construction of Solana
 //! instructions and addresses an agent can build without any network egress; a human or
 //! wallet signs and sends the result. Nothing here can move funds — it only produces the
 //! bytes to sign. Dispatched by an `op` field:
@@ -25,7 +25,7 @@ pub mod handler {
       "type": "object",
       "properties": {
         "op": {"type": "string", "enum": ["derive_pda","derive_ata","system_transfer","spl_transfer"],
-               "description": "Which offline Solana construction to run."},
+               "description": "Which local (no-network) Solana construction to run."},
         "program": {"type": "string", "description": "derive_pda: program id (base58)."},
         "seeds": {"type": "array", "items": {"type": "string"},
                   "description": "derive_pda: seeds, each 'utf8:...' or 'hex:...' (default utf8)."},
@@ -225,7 +225,7 @@ mod component {
     impl Tool for TxBuilder {
         fn name() -> String { "solana_tx_builder".to_string() }
         fn description() -> String {
-            "Offline Solana instruction & address construction — no network needed. Ops: \
+            "Local, pure-compute Solana instruction & address construction — no network needed. Ops: \
              'derive_pda' (find_program_address), 'derive_ata' (associated token account), \
              'system_transfer' (a SOL transfer instruction), 'spl_transfer' (an SPL-Token \
              transfer instruction). Returns the program id, accounts, and instruction data \

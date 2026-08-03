@@ -3,7 +3,7 @@ name = "solana-tx-builder"
 version = "0.1.0"
 edition = "2021"
 license = "MIT OR Apache-2.0"
-description = "ZeroClaw WIT plugin: offline Solana instruction & address construction — PDAs, ATAs, SystemProgram/SPL transfers. Pure compute, no network; the agent builds, a wallet signs."
+description = "ZeroClaw WIT plugin: local, pure-compute Solana instruction & address construction — PDAs, ATAs, SystemProgram/SPL transfers. Zero network surface; the agent builds, a wallet signs."
 publish = false
 
 [lib]

@@ -1,6 +1,6 @@
 //! A ZeroClaw WIT tool plugin: `solana-verify`.
 //!
-//! Offline, pure-compute verification an AI agent can trust without any network egress
+//! Local, pure-compute verification an AI agent can trust without any network egress
 //! (the `tool-plugin` WIT world grants no outbound HTTP). One tool, dispatched by an `op`
 //! field:
 //!   * `merkle_verify`   — fold a keccak-256 Merkle proof to an anchored root
@@ -119,7 +119,7 @@ pub mod handler {
       "type": "object",
       "properties": {
         "op": {"type": "string", "enum": ["merkle_verify","ed25519_verify","pubkey_decode","pubkey_encode"],
-               "description": "Which offline Solana check to run."},
+               "description": "Which local (no-network) Solana check to run."},
         "leaf": {"type": "string", "description": "merkle_verify: 32-byte leaf hash, hex."},
         "root": {"type": "string", "description": "merkle_verify: 32-byte anchored root, hex."},
         "proof": {"type": "array", "description": "merkle_verify: sibling path.",
@@ -216,7 +216,7 @@ mod component {
         fn name() -> String { "solana_verify".to_string() }
 
         fn description() -> String {
-            "Offline Solana verification — no network needed. Ops: 'merkle_verify' folds a \
+            "Local, pure-compute Solana verification — no network needed. Ops: 'merkle_verify' folds a \
              keccak-256 Merkle proof to an anchored root (e.g. a TxODDS on-chain settlement \
              proof); 'ed25519_verify' checks a Solana signature over a message; \
              'pubkey_decode'/'pubkey_encode' convert base58 pubkeys to/from raw bytes. \
